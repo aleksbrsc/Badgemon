@@ -1,19 +1,79 @@
-# blinker
+# ping badge
 
-Badge-to-badge ping over ESP-NOW broadcast, LVGL screen, WS2812 blink.
-Pins/values per `../custom-firmware-hal.md`.
+ESP-NOW ping badge with a main menu, settings + persistent name, and a
+button keyboard. Flash the same firmware on every badge — no pairing,
+no network (WiFi STA, channel 1, broadcast MAC).
 
-## What it does
+## Screens
 
-- Screen: big **"hello htn"** + status line showing your MAC tail
-  (`me AB:CD`) and last ping activity.
-- **Press A** → broadcasts a ping (sequence-numbered, tagged with your
-  MAC). Your status line confirms `ping #N sent!`.
-- **Receive** → status shows `ping #N from AB:CD!` + 300 ms green LED
-  burst on all 6 LEDs.
-- Idle: dim red blink (~10 Hz tick, toggles every 50 ms).
-- No pairing, no network: flash this same firmware on every badge and
-  they all hear each other (WiFi STA, channel 1, broadcast MAC).
+Navigation rule: **Home is always back** (menu is the root).
+- **Menu** (`Up/Down` move, `A` open): `ping`, `settings`. Greets you
+  by name once set.
+- **Ping**: 4-slot digit composer (`Up/Down` digit, `Left/Right`
+  cursor, `A` send, `B` clear, `START` demo `1 3 3 7`), last received
+  `rx MAC: values`, green burst on receive. `Home` back to menu.
+- **Settings**: view name, `edit name` (keyboard), `clear name`.
+- **Keyboard** (reusable, `ui_keyboard.h`): full-width grid, cursor
+  red; `A` pick, `B` delete, `START` save, `Home` cancel. Name persists
+  in NVS (`badge` namespace) across reboots and reflashes.
+
+## Payload wire format (`main/payload.h`)
+
+`mac[6] | seq u32 LE | len u8 | vals[len]`, max 8 values (19 bytes).
+`ping_pack` / `ping_unpack` do the marshalling; malformed packets are
+dropped in the RX callback with a debug log.
+
+## Code map (`main/`)
+
+| file | owns |
+|---|---|
+| `hal_buttons.h/.c` | HC165 + START init, raw read, edge detect |
+| `hal_led.h/.c` | WS2812 strip init + set/show |
+| `hal_display.h/.c` | SPI + ST7789 + LVGL init, screen reset |
+| `hal_i2c.h/.c` | shared I2C bus (accel + NFC) |
+| `net.h/.c` | WiFi STA + ESP-NOW, MAC, send, RX queue |
+| `store.h/.c` | NVS persistence (`badge` namespace) |
+| `nav.h/.c` | screen switching (menu/ping/settings) |
+| `ui_menu.h/.c` | reusable menu (title, subtitle, items, pick/back cbs) |
+| `ui_menu.h/.c` | main menu |
+| `ui_keyboard.h/.c` | reusable button keyboard |
+| `ui_settings.h/.c` | name view/edit/clear |
+| `payload.h` | wire format + `ping_pack`/`ping_unpack` |
+| `ui_ping.h/.c` | composer keyboard + payload display + LEDs |
+| `mfrc522.h/.c` | NFC reader driver (I2C) |
+| `debug.h/.c` | serial REPL |
+| `main.c` | init order + 20 ms poll loop only |
+
+Rules: UI never touches ESP-NOW (use `net_*`), drivers never touch
+LVGL, `net` never touches display/LEDs. `main.c` wires it together.
+
+## Debug console (serial REPL)
+
+`make monitor`, then type at the `badge>` prompt (`help` lists all):
+
+| cmd | what it tells you |
+|---|---|
+| `i2c_scan` | every live I2C address — expect `0x19` (accel) always, `0x26` (NFC) when powered |
+| `nfc_ver` | VersionReg — want `0x91`/`0x92` |
+| `nfc_reg 37` | read one register (hex) |
+| `nfc_regs` | dump all registers |
+| `nfc_begin` | full init with antenna left on |
+| `nfc_scan` | init + single tag poll (hold card at reader) |
+| `btn` | live HC165 + START states |
+| `ping [v0 v1 ..]` | send payload from REPL (default demo `1 3 3 7`) |
+| `log <tag\|*> <level>` | runtime log level: `log net debug`, `log * debug` (tags: main ping net nfc dbg hal_i2c) |
+| `free` / `reboot` | heap stats / restart |
+
+Logging convention: INFO for lifecycle (enter, sent/received/found),
+WARN for recoverable failures, DEBUG for per-step internals (off by
+default, enable via `log`, e.g. `log net debug`). Tags: main ping net
+nfc dbg hal_i2c store menu settings kbd nav.
+
+NFC triage: `i2c_scan` first. Nothing at all → bus wedged, suspect
+low AA voltage (the NFC chip drags the shared bus down — use USB power
+or fresh batteries and re-run). `0x19` but no `0x26` → NFC has no
+power. `0x26` present but `nfc_ver` fails → chip held in reset or init
+timing; paste the `nfc_regs` dump.
 
 ## Setup (once)
 
