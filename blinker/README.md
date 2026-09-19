@@ -1,8 +1,19 @@
 # blinker
 
-Blinks the badge's 6x WS2812 LEDs (GPIO3, dim red, ~1 Hz) and shows
-**"hello htn"** centered on the ST7789 screen via LVGL (Montserrat 48,
-white on teal). Pins/values per `../custom-firmware-hal.md`.
+Badge-to-badge ping over ESP-NOW broadcast, LVGL screen, WS2812 blink.
+Pins/values per `../custom-firmware-hal.md`.
+
+## What it does
+
+- Screen: big **"hello htn"** + status line showing your MAC tail
+  (`me AB:CD`) and last ping activity.
+- **Press A** → broadcasts a ping (sequence-numbered, tagged with your
+  MAC). Your status line confirms `ping #N sent!`.
+- **Receive** → status shows `ping #N from AB:CD!` + 300 ms green LED
+  burst on all 6 LEDs.
+- Idle: dim red blink (~10 Hz tick, toggles every 50 ms).
+- No pairing, no network: flash this same firmware on every badge and
+  they all hear each other (WiFi STA, channel 1, broadcast MAC).
 
 ## Setup (once)
 
