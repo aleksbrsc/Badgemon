@@ -1,8 +1,8 @@
 # blinker
 
 Blinks the badge's 6x WS2812 LEDs (GPIO3, dim red, ~1 Hz) and shows
-white-on-teal **"hello world"** centered on the ST7789 screen.
-Pins/values per `../custom-firmware-hal.md`.
+**"hello htn"** centered on the ST7789 screen via LVGL (Montserrat 48,
+white on teal). Pins/values per `../custom-firmware-hal.md`.
 
 ## Setup (once)
 
