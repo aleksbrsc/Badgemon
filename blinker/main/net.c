@@ -6,6 +6,7 @@
 #include "esp_now.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include <stdio.h>
 #include <string.h>
 
 static const char *TAG = "net";
@@ -14,17 +15,40 @@ static const uint8_t BROADCAST[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 static uint8_t my_mac[6];
 static uint32_t seq = 0;
 static QueueHandle_t rx_queue;
+static net_stats_t stats;
+static bool snoop;
+
+static void snoop_log(const char *dir, const uint8_t *mac, uint32_t s, uint8_t type,
+                      const uint8_t *vals, int len) {
+  char vhex[65];
+  int n = 0;
+  for (int i = 0; i < len && n < (int)sizeof(vhex) - 3; i++)
+    n += snprintf(vhex + n, sizeof(vhex) - n, "%02X", vals[i]);
+  vhex[n] = '\0';
+  ESP_LOGI(TAG, "%s %02X:%02X:%02X:%02X:%02X:%02X seq=%u type=%d len=%d vals=%s", dir,
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], (unsigned)s, type, len, vhex);
+}
 
 // WiFi task context: validate + queue only.
 static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   (void)info;
   ping_msg_t msg;
   if (!ping_unpack(data, len, &msg)) {
+    stats.rx_drop++;
     ESP_LOGD(TAG, "dropped malformed %d-byte packet", len);
     return;
   }
-  if (memcmp(msg.mac, my_mac, 6) == 0) return;  // own echo
-  xQueueSend(rx_queue, &msg, 0);
+  if (memcmp(msg.mac, my_mac, 6) == 0) {
+    stats.rx_drop++;
+    return;  // own echo
+  }
+  if (snoop) snoop_log("RX", msg.mac, msg.seq, msg.type, msg.vals, msg.len);
+  if (!xQueueSend(rx_queue, &msg, 0)) {
+    stats.rx_drop++;
+    ESP_LOGW(TAG, "rx queue full, dropped packet");
+    return;
+  }
+  stats.rx_ok++;
 }
 
 void net_init(void) {
@@ -58,11 +82,36 @@ esp_err_t net_send(uint8_t type, const uint8_t *vals, uint8_t len, uint32_t *seq
   uint8_t buf[64];
   uint32_t s = ++seq;
   int n = ping_pack(buf, my_mac, s, type, vals, len);
-  if (n == 0) return ESP_ERR_INVALID_ARG;
+  if (n == 0) {
+    stats.tx_fail++;
+    stats.last_err = ESP_ERR_INVALID_ARG;
+    ESP_LOGW(TAG, "pack failed #%u type=%d (vals len=%d)", (unsigned)s, type, len);
+    return ESP_ERR_INVALID_ARG;
+  }
   esp_err_t err = esp_now_send(BROADCAST, buf, n);
-  ESP_LOGI(TAG, "sent #%u type=%d (%s)", (unsigned)s, type, esp_err_to_name(err));
+  if (err == ESP_OK) {
+    stats.tx_ok++;
+    if (snoop)
+      snoop_log("TX", my_mac, s, type, vals, len);
+    else
+      ESP_LOGI(TAG, "sent #%u type=%d", (unsigned)s, type);
+  } else {    stats.tx_fail++;
+    stats.last_err = err;
+    ESP_LOGW(TAG, "send #%u type=%d failed: %s", (unsigned)s, type, esp_err_to_name(err));
+  }
   if (seq_out) *seq_out = s;
   return err;
 }
+
+void net_stats(net_stats_t *out) {
+  if (out) *out = stats;
+}
+
+void net_snoop(bool on) {
+  snoop = on;
+  ESP_LOGI(TAG, "snoop %s", on ? "ON" : "off");
+}
+
+bool net_snooping(void) { return snoop; }
 
 bool net_recv(ping_msg_t *msg) { return xQueueReceive(rx_queue, msg, 0) == pdTRUE; }

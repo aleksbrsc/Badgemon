@@ -5,6 +5,7 @@
 #include "net.h"
 #include "store.h"
 #include "ui_msg.h"
+#include "ui_font.h"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
 #include <stdio.h>
@@ -53,20 +54,20 @@ void ui_ping_enter(void) {
   lv_obj_t *scr = lv_scr_act();
   lv_obj_t *title = lv_label_create(scr);
   lv_label_set_text(title, "ping");
-  lv_obj_set_style_text_font(title, &lv_font_montserrat_48, LV_PART_MAIN);
+  lv_obj_set_style_text_font(title, BADGE_FONT, LV_PART_MAIN);
   lv_obj_set_style_text_color(title, lv_color_white(), LV_PART_MAIN);
   lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
   tx_label = lv_label_create(scr);
-  lv_obj_set_style_text_font(tx_label, &lv_font_montserrat_24, LV_PART_MAIN);
+  lv_obj_set_style_text_font(tx_label, BADGE_FONT, LV_PART_MAIN);
   lv_obj_set_style_text_color(tx_label, lv_color_white(), LV_PART_MAIN);
   lv_obj_align(tx_label, LV_ALIGN_TOP_MID, 0, 80);
   rx_label = lv_label_create(scr);
-  lv_obj_set_style_text_font(rx_label, &lv_font_montserrat_14, LV_PART_MAIN);
+  lv_obj_set_style_text_font(rx_label, BADGE_FONT_SMALL, LV_PART_MAIN);
   lv_obj_set_style_text_color(rx_label, lv_color_hex(0xB0FFB0), LV_PART_MAIN);
   lv_obj_align(rx_label, LV_ALIGN_TOP_MID, 0, 130);
   lv_label_set_text(rx_label, "rx --:--: -");
   event_label = lv_label_create(scr);
-  lv_obj_set_style_text_font(event_label, &lv_font_montserrat_14, LV_PART_MAIN);
+  lv_obj_set_style_text_font(event_label, BADGE_FONT_SMALL, LV_PART_MAIN);
   lv_obj_set_style_text_color(event_label, lv_color_hex(0xB0FFB0), LV_PART_MAIN);
   lv_obj_align(event_label, LV_ALIGN_TOP_MID, 0, 160);
   char me[48];
@@ -79,7 +80,7 @@ void ui_ping_enter(void) {
   lv_label_set_text(event_label, me);
   lv_obj_t *foot = lv_label_create(scr);
   lv_label_set_text(foot, "up/dn digit  l/r move\nA send  B clear  Start demo  Home back");
-  lv_obj_set_style_text_font(foot, &lv_font_montserrat_14, LV_PART_MAIN);
+  lv_obj_set_style_text_font(foot, BADGE_FONT_SMALL, LV_PART_MAIN);
   lv_obj_set_style_text_color(foot, lv_color_hex(0x888888), LV_PART_MAIN);
   lv_obj_align(foot, LV_ALIGN_BOTTOM_MID, 0, -8);
   lvgl_port_unlock();

@@ -10,3 +10,4 @@ void ui_play_enter(void);
 void ui_play_tick(uint32_t now_ms, const btn_event_t *ev);
 // True if Home was consumed locally (dialog answer / wait cancel).
 bool ui_play_home(const btn_event_t *ev);
+void ui_play_debug(char *out, int cap);  // state/cursor/peers snapshot

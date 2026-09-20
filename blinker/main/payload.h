@@ -7,8 +7,9 @@
 // Types: PING carries composer digits or message ASCII; DISCOVER asks
 // nearby badges to announce; PRESENCE carries a display name;
 // CHALLENGE carries target_mac[6] + challenger name; RESP carries
-// target_mac[6] + accept u8 + responder name. Broadcast medium —
-// "addressing" is by MAC inside the packet; everyone hears everything.
+// target_mac[6] + accept u8 + responder name; DUEL carries target_mac[6]
+// + turn u8 + move_idx u8 (deterministic lockstep, see ui_duel.c).
+// Broadcast medium — "addressing" is by MAC inside the packet; everyone hears everything.
 #pragma once
 
 #include <stdint.h>
@@ -24,6 +25,7 @@ typedef enum {
   PKT_PRESENCE = 2,  // vals: sender display name
   PKT_CHALLENGE = 3, // vals: target_mac[6] + challenger name
   PKT_RESP = 4,      // vals: target_mac[6] + accept u8 + responder name
+  PKT_DUEL = 5,      // vals: target_mac[6] + turn u8 + move_idx u8
 } pkt_type_t;
 
 typedef struct {

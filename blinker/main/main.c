@@ -19,6 +19,7 @@
 #include "store.h"
 #include "nav.h"
 #include "debug.h"
+#include "fault.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
@@ -43,21 +44,27 @@ static const char *reset_name(esp_reset_reason_t r) {
 }
 
 void app_main(void) {
-  ESP_LOGI(TAG, "ping badge booting (reset=%s)", reset_name(esp_reset_reason()));
+  fault_init();  // report reset reason; loud banner if last boot crashed
+  esp_reset_reason_t reason = esp_reset_reason();
+  ESP_LOGI(TAG, "ping badge booting (reset=%s)", reset_name(reason));
   hal_buttons_init();
   hal_led_init();
   hal_display_init();
+  fault_show_boot_banner();  // hold the crash reason on-screen (crash only)
   hal_i2c_init();
   net_init();
   store_init();  // NVS ready (nvs_flash_init ran in net_init)
+  store_note_boot(reason);  // boot forensics for `boot` cmd (brownout vs nav bug)
   debug_init();  // serial REPL over USB-Serial-JTAG
   nav_show(SCR_MENU);
 
   btn_event_t ev;
   while (1) {
-    if (hal_buttons_poll(&ev)) ESP_LOGD(TAG, "btn edge a=%d b=%d home=%d down=%d left=%d right=%d up=%d",
-                                        ev.a, ev.b, ev.home, ev.down, ev.left, ev.right, ev.up);
-    nav_tick(xTaskGetTickCount() * portTICK_PERIOD_MS, &ev);
+    bool changed = hal_buttons_poll(&ev);
+    debug_merge(&ev);  // OR in serial-injected presses (`press` cmd)
+    if (changed) ESP_LOGD(TAG, "btn edge a=%d b=%d home=%d down=%d left=%d right=%d up=%d",
+                          ev.a, ev.b, ev.home, ev.down, ev.left, ev.right, ev.up);
+    if (!debug_hijacked()) nav_tick(xTaskGetTickCount() * portTICK_PERIOD_MS, &ev);
     vTaskDelay(pdMS_TO_TICKS(20));
   }
 }

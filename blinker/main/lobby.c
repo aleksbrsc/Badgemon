@@ -15,6 +15,20 @@ static int n_peers = 0;
 // 4-slot ring for incoming challenge/response events.
 static lobby_event_t events[4];
 static int ev_head = 0, ev_tail = 0, ev_count = 0;
+static esp_err_t last_err = ESP_OK;
+
+const char *lobby_last_err(void) { return last_err == ESP_OK ? "" : esp_err_to_name(last_err); }
+
+// Wrap net_send with peer context so failures are debuggable on-screen
+// and over the serial REPL (see debug `lobby` command).
+static esp_err_t send_checked(pkt_type_t type, const uint8_t *vals, int len, const char *what) {
+  esp_err_t err = net_send(type, vals, (uint8_t)len, NULL);
+  if (err != ESP_OK) {
+    last_err = err;
+    ESP_LOGW(TAG, "%s failed: %s", what, esp_err_to_name(err));
+  }
+  return err;
+}
 
 void lobby_myname(char *out, int cap) {
   char saved[STORE_NAME_MAX + 1];
@@ -41,6 +55,12 @@ bool lobby_event(lobby_event_t *ev) {
   ev_head = (ev_head + 1) % 4;
   ev_count--;
   return true;
+}
+
+void lobby_inject(const lobby_event_t *ev) {
+  if (!ev) return;
+  ESP_LOGI(TAG, "inject %s from '%s'", ev->is_response ? "resp" : "challenge", ev->name);
+  push_event(ev);
 }
 
 static void upsert(const uint8_t *mac, const char *name) {
@@ -87,14 +107,14 @@ static void vals_name(char *out, const uint8_t *vals, int len) {
   out[n] = '\0';
 }
 
-void lobby_refresh(void) {
+esp_err_t lobby_refresh(void) {
   char me[LOBBY_NAME_MAX + 1];
   lobby_myname(me, sizeof(me));
   ESP_LOGI(TAG, "discover as '%s'", me);
-  net_send(PKT_DISCOVER, (const uint8_t *)me, strlen(me), NULL);
+  return send_checked(PKT_DISCOVER, (const uint8_t *)me, strlen(me), "discover");
 }
 
-void lobby_challenge(const uint8_t *mac) {
+esp_err_t lobby_challenge(const uint8_t *mac) {
   char me[LOBBY_NAME_MAX + 1];
   lobby_myname(me, sizeof(me));
   uint8_t buf[6 + LOBBY_NAME_MAX + 1];
@@ -102,10 +122,10 @@ void lobby_challenge(const uint8_t *mac) {
   int nl = strlen(me);
   memcpy(buf + 6, me, nl);
   ESP_LOGI(TAG, "challenge %02X:%02X as '%s'", mac[4], mac[5], me);
-  net_send(PKT_CHALLENGE, buf, 6 + nl, NULL);
+  return send_checked(PKT_CHALLENGE, buf, 6 + nl, "challenge");
 }
 
-void lobby_respond(const uint8_t *mac, bool accept) {
+esp_err_t lobby_respond(const uint8_t *mac, bool accept) {
   char me[LOBBY_NAME_MAX + 1];
   lobby_myname(me, sizeof(me));
   uint8_t buf[6 + 1 + LOBBY_NAME_MAX + 1];
@@ -114,7 +134,7 @@ void lobby_respond(const uint8_t *mac, bool accept) {
   int nl = strlen(me);
   memcpy(buf + 7, me, nl);
   ESP_LOGI(TAG, "respond %s to %02X:%02X", accept ? "accept" : "decline", mac[4], mac[5]);
-  net_send(PKT_RESP, buf, 7 + nl, NULL);
+  return send_checked(PKT_RESP, buf, 7 + nl, "respond");
 }
 
 static bool for_me(const uint8_t *target) { return !memcmp(target, net_mac(), 6); }
@@ -129,7 +149,7 @@ void lobby_tick(void) {
         upsert(m.mac, me[0] ? me : "??");
         // Announce back so the discoverer lists us.
         lobby_myname(me, sizeof(me));
-        net_send(PKT_PRESENCE, (const uint8_t *)me, strlen(me), NULL);
+        send_checked(PKT_PRESENCE, (const uint8_t *)me, strlen(me), "presence reply");
         break;
       case PKT_PRESENCE:
         vals_name(me, m.vals, m.len);

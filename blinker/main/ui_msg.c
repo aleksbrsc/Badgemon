@@ -6,6 +6,7 @@
 #include "net.h"
 #include "nav.h"
 #include "ui_keyboard.h"
+#include "ui_font.h"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
 #include "freertos/FreeRTOS.h"
@@ -91,30 +92,30 @@ void ui_msg_enter(void) {
   lv_obj_t *scr = lv_scr_act();
   lv_obj_t *title = lv_label_create(scr);
   lv_label_set_text(title, "message");
-  lv_obj_set_style_text_font(title, &lv_font_montserrat_14, LV_PART_MAIN);
+  lv_obj_set_style_text_font(title, BADGE_FONT_SMALL, LV_PART_MAIN);
   lv_obj_set_style_text_color(title, lv_color_hex(0x888888), LV_PART_MAIN);
   lv_obj_align(title, LV_ALIGN_TOP_LEFT, 8, 0);
   rx_label = lv_label_create(scr);
-  lv_obj_set_style_text_font(rx_label, &lv_font_montserrat_14, LV_PART_MAIN);
+  lv_obj_set_style_text_font(rx_label, BADGE_FONT_SMALL, LV_PART_MAIN);
   lv_obj_set_style_text_color(rx_label, lv_color_hex(0xB0FFB0), LV_PART_MAIN);
   lv_obj_set_width(rx_label, 312);
   lv_label_set_long_mode(rx_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
   lv_obj_align(rx_label, LV_ALIGN_TOP_LEFT, 8, 18);
   lv_label_set_text(rx_label, "rx --:--");
   text_label = lv_label_create(scr);
-  lv_obj_set_style_text_font(text_label, &lv_font_montserrat_24, LV_PART_MAIN);
+  lv_obj_set_style_text_font(text_label, BADGE_FONT, LV_PART_MAIN);
   lv_obj_set_style_text_color(text_label, lv_color_white(), LV_PART_MAIN);
   lv_obj_set_width(text_label, 312);
   lv_label_set_long_mode(text_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
   lv_obj_align(text_label, LV_ALIGN_TOP_LEFT, 8, 38);
   grid_label = lv_label_create(scr);
   lv_label_set_recolor(grid_label, true);
-  lv_obj_set_style_text_font(grid_label, &lv_font_montserrat_24, LV_PART_MAIN);
+  lv_obj_set_style_text_font(grid_label, BADGE_FONT, LV_PART_MAIN);
   lv_obj_set_style_text_color(grid_label, lv_color_hex(0xB0FFB0), LV_PART_MAIN);
   lv_obj_set_style_text_line_space(grid_label, -6, LV_PART_MAIN);  // 6 rows fit
   lv_obj_align(grid_label, LV_ALIGN_TOP_LEFT, 8, 72);
   event_label = lv_label_create(scr);
-  lv_obj_set_style_text_font(event_label, &lv_font_montserrat_14, LV_PART_MAIN);
+  lv_obj_set_style_text_font(event_label, BADGE_FONT_SMALL, LV_PART_MAIN);
   lv_obj_set_style_text_color(event_label, lv_color_hex(0x888888), LV_PART_MAIN);
   lv_obj_align(event_label, LV_ALIGN_BOTTOM_LEFT, 8, -6);
   const uint8_t *mac = net_mac();

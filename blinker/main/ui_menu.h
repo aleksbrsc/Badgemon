@@ -17,3 +17,4 @@ typedef void (*menu_back_cb)(void *ctx);
 void ui_menu_open(const char *title, const char *subtitle, const char *items[], int n_items,
                   menu_select_cb on_select, menu_back_cb on_back, void *ctx);
 void ui_menu_tick(uint32_t now_ms, const btn_event_t *ev);
+void ui_menu_debug(char *out, int cap);  // "menu sel=1/2 items=[play edit name]"

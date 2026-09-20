@@ -25,3 +25,4 @@ void ui_keyboard_bind(lv_obj_t *text_label, lv_obj_t *grid_label, const char *in
                       int max_len, keyboard_done_cb on_done, void *ctx);
 bool ui_keyboard_active(void);
 void ui_keyboard_tick(uint32_t now_ms, const btn_event_t *ev);
+void ui_keyboard_debug(char *out, int cap);  // active/text/cursor/shift snapshot

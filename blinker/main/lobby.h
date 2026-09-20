@@ -9,6 +9,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "esp_err.h"
 #include "payload.h"
 
 #define LOBBY_MAX_PEERS 8
@@ -31,9 +32,15 @@ typedef struct {
 
 // My display name: settings name, or MAC-tail fallback.
 void lobby_myname(char *out, int cap);
-void lobby_refresh(void);  // broadcast DISCOVER
+// All send paths return esp_err_t now so the UI can show failures
+// (and debug can print them) instead of failing silently.
+esp_err_t lobby_refresh(void);  // broadcast DISCOVER
 int lobby_list(lobby_peer_t *out, int cap);
-void lobby_challenge(const uint8_t *mac);       // challenge one peer
-void lobby_respond(const uint8_t *mac, bool accept);  // answer a challenge
+esp_err_t lobby_challenge(const uint8_t *mac);       // challenge one peer
+esp_err_t lobby_respond(const uint8_t *mac, bool accept);  // answer a challenge
+const char *lobby_last_err(void);  // esp_err_to_name of last failed send, "" if none
 bool lobby_event(lobby_event_t *ev);  // incoming challenge/response for me
 void lobby_tick(void);
+// Debug: push a synthetic incoming event (challenge/response) so the UI
+// self-test can exercise the dialog path with no second badge around.
+void lobby_inject(const lobby_event_t *ev);
