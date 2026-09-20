@@ -17,9 +17,11 @@ static const char *TAG = "play";
 
 #define WAIT_TIMEOUT_MS 10000
 #define RESULT_MS 2500
-// Peer rows: slot art + name, 3 visible with a scroll window.
-// Status sits on the baked dialog bar (dark-on-white); the challenge
-// dialog uses the speech bubble frame.
+#define POLL_MS 1000
+#define DOTS_MS 400
+// Peer rows: plain text on the teal screen, 3 visible with a scroll
+// window. Status shows the Waiting pulse; the challenge dialog uses
+// the speech bubble frame.
 #define PLAY_NAME_CHARS 12
 #define ROW_INK lv_color_hex(0x1F353C)
 
@@ -28,10 +30,8 @@ typedef enum { ST_BROWSE, ST_WAIT, ST_DIALOG, ST_RESULT } play_state_t;
 static play_state_t st = ST_BROWSE;
 static lobby_peer_t peers[LOBBY_MAX_PEERS];
 static int n_peers = 0;
-static int cursor = 0;  // 0 = rescan row, 1..n = peer rows
-static lv_obj_t *title_label;
+static int cursor = 0;  // index into peers (no refresh row anymore)
 static lv_obj_t *you_name_label;
-static lv_obj_t *row_slots[PLAY_ROWS_SHOWN];
 static lv_obj_t *row_names[PLAY_ROWS_SHOWN];
 static lv_obj_t *row_cursor;
 static lv_obj_t *bubble_img;
@@ -68,26 +68,31 @@ static void status_net_err(const char *what, esp_err_t err) {
   status_show(s, true);
 }
 
-static void title_refresh(void) {
-  if (!lvgl_port_lock(0)) return;
-  char t[32];
-  snprintf(t, sizeof(t), "play (%d)", n_peers);
-  lv_label_set_text(title_label, t);
-  lvgl_port_unlock();
-}
-
 static void you_refresh(void) {
   if (!lvgl_port_lock(0)) return;
   char me[LOBBY_NAME_MAX + 1];
   lobby_myname(me, sizeof(me));
-  char t[24];
-  snprintf(t, sizeof(t), "YOU:%-.7s", me);
+  char t[32];
+  snprintf(t, sizeof(t), "username: %s", me);
   lv_label_set_text(you_name_label, t);
   lvgl_port_unlock();
 }
 
+// "Waiting." / "Waiting.." / "Waiting..." pulse. Direct label write
+// (no ESP_LOG spam like status_show).
+static void waiting_show(uint32_t now) {
+  if (!status_label) return;
+  int dots = (int)((now / DOTS_MS) % 3) + 1;
+  char t[16];
+  snprintf(t, sizeof(t), "Waiting%.*s", dots, "...");
+  if (!lvgl_port_lock(0)) return;
+  lv_label_set_text(status_label, t);
+  lv_obj_set_style_text_color(status_label, lv_color_white(), LV_PART_MAIN);
+  lvgl_port_unlock();
+}
+
 static void list_redraw(void) {
-  int rows = n_peers + 1;  // rescan + peers
+  int rows = n_peers;
   int ws = cursor - 1;     // first visible absolute row (cursor centered)
   if (ws < 0) ws = 0;
   if (ws > rows - PLAY_ROWS_SHOWN) ws = rows - PLAY_ROWS_SHOWN;
@@ -100,22 +105,19 @@ static void list_redraw(void) {
       continue;
     }
     lv_obj_set_flag(row_names[v], LV_OBJ_FLAG_HIDDEN, false);
-    if (r == 0) {
-      lv_label_set_text(row_names[v], "refresh");
-    } else if (r - 1 < n_peers) {
-      char nm[PLAY_NAME_CHARS + 1];
-      strncpy(nm, peers[r - 1].name, PLAY_NAME_CHARS);
-      nm[PLAY_NAME_CHARS] = '\0';
-      lv_label_set_text(row_names[v], nm);
-    }
+    char nm[PLAY_NAME_CHARS + 1];
+    strncpy(nm, peers[r].name, PLAY_NAME_CHARS);
+    nm[PLAY_NAME_CHARS] = '\0';
+    lv_label_set_text(row_names[v], nm);
     lv_obj_set_style_text_color(row_names[v],
                                 r == cursor ? lv_color_hex(0xFFE45E) : lv_color_white(),
                                 LV_PART_MAIN);
   }
+  // No peers: hide the cursor entirely.
+  lv_obj_set_flag(row_cursor, LV_OBJ_FLAG_HIDDEN, rows == 0);
   lv_obj_set_pos(row_cursor, PLAY_CURSOR_X,
                  PLAY_ROWS_Y + (cursor - ws) * PLAY_ROW_PITCH + 5);
   lvgl_port_unlock();
-  title_refresh();
 }
 
 static void show_dialog(bool on) {
@@ -135,7 +137,6 @@ static void show_browse(void) {
   n_peers = lobby_list(peers, LOBBY_MAX_PEERS);
   show_dialog(false);
   list_redraw();
-  status_show("A: refresh / challenge", false);
   hal_led_set_all(0, 0, 8);
 }
 
@@ -147,21 +148,15 @@ void ui_play_enter(void) {
 
   // Text-only lobby on the plain teal screen (no party backdrop art,
   // no slot rows, no decorative HP bar).
-  // YOU row: my name as plain text.
+  // Username row: my name as plain text.
   you_name_label = lv_label_create(scr);
   lv_obj_set_style_text_font(you_name_label, BADGE_FONT_SMALL, LV_PART_MAIN);
   lv_obj_set_style_text_color(you_name_label, lv_color_white(), LV_PART_MAIN);
   lv_obj_set_pos(you_name_label, PARTY_YOU_NAME_X, PARTY_YOU_NAME_Y);
-
-  title_label = lv_label_create(scr);
-  lv_label_set_text(title_label, "play");
-  lv_obj_set_style_text_font(title_label, BADGE_FONT, LV_PART_MAIN);
-  lv_obj_set_style_text_color(title_label, lv_color_hex(0xFFE45E), LV_PART_MAIN);
-  lv_obj_set_pos(title_label, PLAY_TITLE_X, PLAY_TITLE_Y);
+  lv_obj_set_width(you_name_label, 280);
 
   for (int v = 0; v < PLAY_ROWS_SHOWN; v++) {
     int y = PLAY_ROWS_Y + v * PLAY_ROW_PITCH;
-    row_slots[v] = NULL;  // unused: text-only rows (kept for sizing)
     row_names[v] = lv_label_create(scr);
     lv_obj_set_style_text_font(row_names[v], BADGE_FONT, LV_PART_MAIN);
     lv_obj_set_style_text_color(row_names[v], lv_color_white(), LV_PART_MAIN);
@@ -169,7 +164,7 @@ void ui_play_enter(void) {
     lv_obj_set_width(row_names[v], PLAY_NAME_W);
   }
   row_cursor = lv_image_create(scr);
-  lv_image_set_src(row_cursor, &assets_cursor);
+  lv_image_set_src(row_cursor, &assets_cursor_white);
 
   bubble_img = lv_image_create(scr);
   lv_image_set_src(bubble_img, &assets_bubble);
@@ -190,9 +185,7 @@ void ui_play_enter(void) {
   lvgl_port_unlock();
   show_browse();
   you_refresh();
-  esp_err_t err = lobby_refresh();  // auto-scan on open
-  status_show(err == ESP_OK ? "refreshing..." : "refresh failed", err != ESP_OK);
-  if (err != ESP_OK) status_net_err("refresh", err);
+  lobby_refresh();  // kick off discovery; tick polls every POLL_MS
 }
 
 static void to_wait(const lobby_peer_t *p) {
@@ -219,10 +212,9 @@ static void to_dialog(const lobby_event_t *ev) {
   show_dialog(true);
   if (!lvgl_port_lock(0)) return;
   char buf[96];
-  snprintf(buf, sizeof(buf), "%s\nwants to play!\n\nA = yes   B = no", ev->name);
+  snprintf(buf, sizeof(buf), "%s\nwants to play!\nA = yes\nB = no", ev->name);
   lv_label_set_text(bubble_label, buf);
   lvgl_port_unlock();
-  status_show("answer!", false);
   hal_led_set_all(0, 24, 0);
 }
 
@@ -260,38 +252,34 @@ void ui_play_tick(uint32_t now_ms, const btn_event_t *ev) {
 
   switch (st) {
     case ST_BROWSE: {
-      int rows = n_peers + 1;
-      if (ev->up) {
-        cursor = (cursor + rows - 1) % rows;
-        list_redraw();
-      }
-      if (ev->down) {
-        cursor = (cursor + 1) % rows;
-        list_redraw();
-      }
-      if (ev->a) {
-        if (cursor == 0) {
-          esp_err_t err = lobby_refresh();
-          if (err != ESP_OK)
-            status_net_err("refresh", err);
-          else
-            status_show("refreshing...", false);
-        } else if (cursor - 1 < n_peers) {
-          to_wait(&peers[cursor - 1]);
+      if (n_peers > 0) {
+        if (ev->up) {
+          cursor = (cursor + n_peers - 1) % n_peers;
+          list_redraw();
+        }
+        if (ev->down) {
+          cursor = (cursor + 1) % n_peers;
+          list_redraw();
+        }
+        if (ev->a && cursor < n_peers) {
+          to_wait(&peers[cursor]);
         }
       }
-      // Refresh the list view periodically (presence trickles in).
-      static uint32_t last_list = 0;
-      if (now_ms - last_list > 1000) {
-        last_list = now_ms;
+      // Poll for peers every second (presence trickles in); the
+      // status line pulses Waiting. / Waiting.. / Waiting...
+      static uint32_t last_poll = 0;
+      if (now_ms - last_poll > POLL_MS) {
+        last_poll = now_ms;
+        lobby_refresh();
         int n = lobby_list(peers, LOBBY_MAX_PEERS);
         if (n != n_peers) {
           ESP_LOGD(TAG, "peer count %d -> %d", n_peers, n);
           n_peers = n;
-          if (cursor > n_peers) cursor = n_peers;
+          if (cursor >= n_peers) cursor = n_peers > 0 ? n_peers - 1 : 0;
           list_redraw();
         }
       }
+      waiting_show(now_ms);
       if (++blink_div >= 25) {
         blink_div = 0;
         hal_led_set_all(0, 0, 8);

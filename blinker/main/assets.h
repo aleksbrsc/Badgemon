@@ -15,12 +15,15 @@
 
 LV_IMAGE_DECLARE(assets_duel_bg);
 LV_IMAGE_DECLARE(assets_party_bg);
+LV_IMAGE_DECLARE(assets_menu_bg);
+LV_IMAGE_DECLARE(assets_party_screen);
 LV_IMAGE_DECLARE(assets_bubble);
 LV_IMAGE_DECLARE(assets_speech_half);
 LV_IMAGE_DECLARE(assets_caption);
 LV_IMAGE_DECLARE(assets_caption_half);
 LV_IMAGE_DECLARE(assets_slot);
 LV_IMAGE_DECLARE(assets_cursor);
+LV_IMAGE_DECLARE(assets_cursor_white);
 LV_IMAGE_DECLARE(assets_cursor_sm);
 
 // Duel scene (assets_duel_bg): baked plates + dark dialog strip.
@@ -35,16 +38,16 @@ LV_IMAGE_DECLARE(assets_cursor_sm);
 #define DUEL_FOE_BAR_Y 47
 #define DUEL_FOE_BAR_W 57
 #define DUEL_FOE_BAR_H 3
-// Player (bottom-right) plate. Bar extends a few px left and a bit
-// more right vs the baked art so the fill reads clearly.
+// Player (bottom-right) plate. Bar extends slightly past the baked
+// art so the fill reads clearly.
 #define DUEL_ME_NAME_X 192
 #define DUEL_ME_NAME_Y 117
 #define DUEL_ME_HP_X 192
-#define DUEL_ME_HP_Y 141
+#define DUEL_ME_HP_Y 144
 #define DUEL_ME_HP_W 98
-#define DUEL_ME_BAR_X 232
+#define DUEL_ME_BAR_X 234
 #define DUEL_ME_BAR_Y 135
-#define DUEL_ME_BAR_W 66
+#define DUEL_ME_BAR_W 60
 #define DUEL_ME_BAR_H 4
 // Bottom strip: caption bubbles carry the log / prompt, the speech
 // bubble carries the command menu. NOTE: speech-bubble-full art does
@@ -63,8 +66,11 @@ LV_IMAGE_DECLARE(assets_cursor_sm);
 #define DUEL_SPEECH_X 172
 #define DUEL_SPEECH_Y 171
 // Command options: 2 cols x 2 rows (FIGHT BAG / BADGEMON RUN).
-#define DUEL_CMD_COL_X0 190
-#define DUEL_CMD_COL_X1 244
+// Col 1 sits far enough right that BADGEMON's N clears RUN by ~2
+// letters; both cols sit right enough that the cursor (x - 10)
+// clears the speech bubble's left edge.
+#define DUEL_CMD_COL_X0 198
+#define DUEL_CMD_COL_X1 278
 #define DUEL_CMD_ROW_Y0 183
 #define DUEL_CMD_ROW_Y1 207
 // Move list (inside the full caption): 2 cols x 2 rows, nudged toward
@@ -109,9 +115,31 @@ LV_IMAGE_DECLARE(assets_cursor_sm);
 #define PLAY_BUBBLE_TEXT_Y 69
 #define PLAY_BUBBLE_TEXT_W 248
 
-// Menu screen on assets_party_bg.
+// Menu screen on assets_menu_bg (title art baked in, footer baked in).
 #define MENU_TITLE_Y 88
 #define MENU_BTNS_X 24
 #define MENU_BTNS_W 272
-#define MENU_BTNS_Y 118
+#define MENU_BTNS_Y 106
 #define MENU_BTN_H 34
+
+// Party screen on assets_party_screen: current mon in the top-left
+// panel (name + numbers overlaid, fill bar over the baked trough),
+// extra mons as slot rows starting at (138, 8), dialog bottom.
+#define PARTY2_NAME_X 38
+#define PARTY2_NAME_Y 12
+#define PARTY2_HP_X 38
+#define PARTY2_HP_Y 36
+#define PARTY2_BAR_X 32
+#define PARTY2_BAR_Y 64
+#define PARTY2_BAR_W 110
+#define PARTY2_BAR_H 8
+#define PARTY2_SLOT_X 138
+#define PARTY2_SLOT_Y 8
+#define PARTY2_SLOT_PITCH 40
+#define PARTY2_DLG_X 14
+#define PARTY2_DLG_Y 202
+#define PARTY2_DLG_W 216
+
+// Battle intro wipe: two full-width black bars, 120px tall each.
+#define INTRO_BAR_H 120
+#define INTRO_MS 2000

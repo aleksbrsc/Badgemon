@@ -34,7 +34,7 @@ static void on_main_pick(int index, void *ctx) {
 }
 
 static void menu_enter_main(void) {
-  ui_menu_open("Badgemon", "", main_items, 2, on_main_pick, NULL, NULL);
+  ui_menu_open("", "", main_items, 2, on_main_pick, NULL, NULL);
 }
 
 void nav_show(screen_t s) {

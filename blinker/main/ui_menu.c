@@ -55,23 +55,26 @@ void ui_menu_open(const char *title, const char *subtitle, const char *items[], 
   hal_display_reset();
   lv_obj_t *scr = lv_scr_act();
 
-  // Party backdrop (baked YOU plate + dialog bar are decorative here;
-  // the dialog bar frames the footer hint).
+  // Title art backdrop (Badgemon banner + Solana footer are baked in).
   lv_obj_t *bg = lv_image_create(scr);
-  lv_image_set_src(bg, &assets_party_bg);
+  lv_image_set_src(bg, &assets_menu_bg);
   lv_obj_set_pos(bg, 0, 0);
 
-  lv_obj_t *t = lv_label_create(scr);
-  lv_label_set_text(t, title ? title : "");
-  lv_obj_set_style_text_font(t, BADGE_FONT, LV_PART_MAIN);
-  lv_obj_set_style_text_color(t, lv_color_hex(0xFFE45E), LV_PART_MAIN);
-  lv_obj_align(t, LV_ALIGN_TOP_MID, 0, MENU_TITLE_Y);
+  // Title text is baked into the art; only draw it when a non-menu
+  // caller passes one.
+  if (title && title[0]) {
+    lv_obj_t *t = lv_label_create(scr);
+    lv_label_set_text(t, title);
+    lv_obj_set_style_text_font(t, BADGE_FONT, LV_PART_MAIN);
+    lv_obj_set_style_text_color(t, lv_color_hex(0xFFE45E), LV_PART_MAIN);
+    lv_obj_align(t, LV_ALIGN_TOP_MID, 0, MENU_TITLE_Y);
+  }
 
   if (subtitle && subtitle[0]) {
     lv_obj_t *sub = lv_label_create(scr);
     lv_label_set_text(sub, subtitle);
     lv_obj_set_style_text_font(sub, BADGE_FONT_SMALL, LV_PART_MAIN);
-    lv_obj_set_style_text_color(sub, lv_color_hex(0xB0FFB0), LV_PART_MAIN);
+    lv_obj_set_style_text_color(sub, lv_color_white(), LV_PART_MAIN);
     lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, MENU_TITLE_Y + 24);
   }
 
@@ -95,12 +98,7 @@ void ui_menu_open(const char *title, const char *subtitle, const char *items[], 
   lv_obj_set_style_pad_all(m, 2, LV_PART_MAIN);
   btnm = m;
 
-  lv_obj_t *foot = lv_label_create(scr);
-  lv_label_set_text(foot, back_cb ? "up/down move, A open, Home back" : "up/down move, A open");
-  lv_obj_set_style_text_font(foot, BADGE_FONT_SMALL, LV_PART_MAIN);
-  lv_obj_set_style_text_color(foot, lv_color_hex(0x1F353C), LV_PART_MAIN);
-  lv_obj_set_pos(foot, PARTY_DLG_X, PARTY_DLG_Y);
-  lv_obj_set_width(foot, PARTY_DLG_W);
+  // No footer hint: navigation is up/down + A.
   lvgl_port_unlock();
   refresh_sel();
   hal_led_set_all(0, 0, 0);

@@ -1,4 +1,4 @@
-// Play: nearby-player lobby. Browse peers (A=refresh), challenge one,
+// Play: nearby-player lobby. Peers auto-poll every second (A=challenge),
 // answer incoming challenges. Home backs out (consumed while a dialog
 // or wait is active — see ui_play_home).
 #pragma once
