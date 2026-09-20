@@ -43,6 +43,10 @@ LV_IMAGE_DECLARE(assets_patchy_back_1);
 LV_IMAGE_DECLARE(assets_patchy_back_2);
 LV_IMAGE_DECLARE(assets_patchy_front_1);
 LV_IMAGE_DECLARE(assets_patchy_front_2);
+LV_IMAGE_DECLARE(assets_goose_back_1);
+LV_IMAGE_DECLARE(assets_goose_back_2);
+LV_IMAGE_DECLARE(assets_goose_front_1);
+LV_IMAGE_DECLARE(assets_goose_front_2);
 
 // Vinyl battle sprites (2-frame send-out); frame positions from art layout.
 #define DUEL_VINYL_BACK_X1 66
@@ -73,6 +77,15 @@ LV_IMAGE_DECLARE(assets_patchy_front_2);
 #define DUEL_PATCH_POKEBALL_ME_Y 165
 #define DUEL_PATCH_POKEBALL_FOE_X 214
 #define DUEL_PATCH_POKEBALL_FOE_Y 85
+// Goose (wild-only) battle sprites.
+#define DUEL_GOOSE_BACK_X 76
+#define DUEL_GOOSE_BACK_Y 108
+#define DUEL_GOOSE_FOE_X 210
+#define DUEL_GOOSE_FOE_Y 40
+#define DUEL_GOOSE_POKEBALL_ME_X 88
+#define DUEL_GOOSE_POKEBALL_ME_Y 154
+#define DUEL_GOOSE_POKEBALL_FOE_X 218
+#define DUEL_GOOSE_POKEBALL_FOE_Y 82
 
 // Duel scene (assets_duel_bg): baked plates + dark dialog strip.
 #define DUEL_BG_W 320
@@ -143,16 +156,39 @@ LV_IMAGE_DECLARE(assets_patchy_front_2);
 #define DUEL_CUR_DY 4
 
 // Party screens (assets_party_bg): baked YOU plate + bottom dialog bar.
-#define PARTY_YOU_NAME_X 24
-#define PARTY_YOU_NAME_Y 28
-#define PARTY_YOU_BAR_X 69
-#define PARTY_YOU_BAR_Y 53
-#define PARTY_YOU_BAR_W 57
-#define PARTY_YOU_BAR_H 7
+#define PARTY_YOU_NAME_X 52
+#define PARTY_YOU_NAME_Y 30
+#define PARTY_YOU_LEVEL_X 52
+#define PARTY_YOU_LEVEL_Y 44
+#define PARTY_YOU_HP_X 52
+#define PARTY_YOU_HP_Y 58
+#define PARTY_YOU_BAR_X 32
+#define PARTY_YOU_BAR_Y 56
+#define PARTY_YOU_BAR_W 90
+#define PARTY_YOU_BAR_H 6
 // Baked dialog bar used for status/footer text (dark-on-white).
 #define PARTY_DLG_X 14
 #define PARTY_DLG_Y 202
 #define PARTY_DLG_W 222
+// Party list column (assets_party_bg + assets_slot), right side.
+#define PARTY_BG_SLOT_X 138
+#define PARTY_BG_SLOT_Y 24
+#define PARTY_BG_SLOT_PITCH 28
+#define PARTY_SLOT_NAME_OFS_X 44
+#define PARTY_SLOT_NAME_OFS_Y 4
+#define PARTY_SLOT_LV_OFS_Y 16
+#define PARTY_SLOT_BAR_OFS_X 98
+#define PARTY_SLOT_BAR_OFS_Y 27
+#define PARTY_SLOT_BAR_W 62
+#define PARTY_SLOT_BAR_H 3
+#define PARTY_SLOT_CUR_X 124
+#define PARTY_SLOT_CUR_DY 10
+#define PARTY_LEFT_CUR_X 36
+#define PARTY_LEFT_CUR_Y 36
+#define PARTY_INACTIVE_MAX 5
+#define PARTY_CANCEL_X 272
+#define PARTY_CANCEL_Y 218
+#define PARTY_CANCEL_W 44
 
 // Play lobby rows: plain text list (no slot art) + cursor + name.
 #define PLAY_TITLE_X 150

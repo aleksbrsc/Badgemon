@@ -8,9 +8,11 @@ typedef enum {
   SPECIES_CHARMANDER = 0,
   SPECIES_BULBASAUR,
   SPECIES_SQUIRTLE,
+  SPECIES_GOOSE,  // wild-only (catchable); not a starter
   SPECIES_COUNT
 } species_id_t;
 
+// Only the first STARTER_COUNT species are handed out as starters.
 #define STARTER_COUNT 3
 #define GAME_START_LEVEL 5
 

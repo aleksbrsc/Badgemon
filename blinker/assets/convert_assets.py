@@ -172,6 +172,10 @@ def main():
         convert('assets_patchy_back_2', 'patchy_back_2.png', 50, 52, True),
         convert('assets_patchy_front_1', 'patchy_front_1.png', 41, 44, True),
         convert('assets_patchy_front_2', 'patchy_front_2.png', 41, 44, True),
+        convert('assets_goose_back_1', 'goose_back_1.png', 50, 53, True),
+        convert('assets_goose_back_2', 'goose_back_2.png', 50, 57, True),
+        convert('assets_goose_front_1', 'goose_front_1.png', 41, 47, True),
+        convert('assets_goose_front_2', 'goose_front_2.png', 41, 46, True),
     ]
     emit_c(images)
     total = sum(len(b) for _, _, _, _, b in images)

@@ -47,6 +47,21 @@ static const pokemon_t SPECIES[SPECIES_COUNT] = {
          {"Bite", TYPE_DARK, 60, 25},
          {"Rapid Spin", TYPE_NORMAL, 20, 40},
      }},
+    {.name = "Goose",
+     .growth = GROWTH_MEDIUM_SLOW,
+     .base_hp = 50,
+     .base_attack = 55,
+     .base_defense = 45,
+     .base_exp = 66,
+     .type1 = TYPE_WATER,
+     .type2 = TYPE_FLYING,
+     .move_count = 4,
+     .moves = {
+         {"Water Gun", TYPE_WATER, 40, 25},
+         {"Peck", TYPE_FLYING, 35, 35},
+         {"Bite", TYPE_DARK, 60, 25},
+         {"Rapid Spin", TYPE_NORMAL, 20, 40},
+     }},
 };
 
 species_id_t species_random_starter(void) {

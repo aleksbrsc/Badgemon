@@ -3,10 +3,14 @@
 #include "nav.h"
 #include "hal_led.h"
 #include "hal_display.h"
+#include "hal_accel.h"
 #include "lobby.h"
+#include "game.h"
+#include "pokemon_data.h"
 #include "ui_font.h"
 #include "assets.h"
 #include "esp_log.h"
+#include "esp_random.h"
 #include "esp_lvgl_port.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -19,6 +23,10 @@ static const char *TAG = "play";
 #define RESULT_MS 2500
 #define POLL_MS 1000
 #define DOTS_MS 400
+// Wild encounter: FAST motion held continuously for 3 s in the lobby.
+#define WILD_HIGH_HOLD_MS 1000
+#define WILD_COOLDOWN_MS 4000
+#define PLAY_MOTION_Y 182        // above Waiting / TRAINER SPOTTED (PARTY_DLG_Y)
 // Peer rows: plain text on the teal screen, 3 visible with a scroll
 // window. Status shows the Waiting pulse; the challenge dialog uses
 // the speech bubble frame.
@@ -37,6 +45,8 @@ static lv_obj_t *row_cursor;
 static lv_obj_t *bubble_img;
 static lv_obj_t *bubble_label;
 static lv_obj_t *status_label;
+static lv_obj_t *motion_label;
+static uint32_t wild_high_since;
 static uint8_t wait_mac[6];
 static char wait_name[LOBBY_NAME_MAX + 1];
 static uint32_t wait_since = 0;
@@ -45,6 +55,7 @@ static char dlg_name[LOBBY_NAME_MAX + 1];
 static char result_text[64];
 static uint32_t result_until = 0;
 static int blink_div = 0;
+static accel_shake_t wild_shake;  // lobby shake-to-encounter detector
 
 static uint32_t now_ms(void) { return xTaskGetTickCount() * portTICK_PERIOD_MS; }
 
@@ -96,6 +107,28 @@ static void waiting_show(uint32_t now) {
   lvgl_port_unlock();
 }
 
+static void motion_bar_show(accel_motion_t level) {
+  if (!motion_label) return;
+  char buf[56];
+  if (!hal_accel_ok()) {
+    snprintf(buf, sizeof(buf), "[ accel offline ]");
+  } else {
+    snprintf(buf, sizeof(buf), "[ %s ] [ %s ] [ %s ]",
+             level == ACCEL_MOTION_SLOW ? "SLOW" : "slow",
+             level == ACCEL_MOTION_MEDIUM ? "MEDIUM" : "medium",
+             level == ACCEL_MOTION_FAST ? "FAST" : "fast");
+  }
+  lv_color_t c = lv_color_hex(0x606060);
+  if (level == ACCEL_MOTION_SLOW) c = lv_color_hex(0xA8A8A8);
+  else if (level == ACCEL_MOTION_MEDIUM) c = lv_color_white();
+  else if (level == ACCEL_MOTION_FAST) c = lv_color_hex(0xFFE45E);
+  else if (!hal_accel_ok()) c = lv_color_hex(0xFF7070);
+  if (!lvgl_port_lock(0)) return;
+  lv_label_set_text(motion_label, buf);
+  lv_obj_set_style_text_color(motion_label, c, LV_PART_MAIN);
+  lvgl_port_unlock();
+}
+
 static void trainer_spotted_show(void) {
   if (!status_label) return;
   if (!lvgl_port_lock(0)) return;
@@ -143,6 +176,8 @@ static void show_dialog(bool on) {
   lv_obj_set_flag(row_cursor, LV_OBJ_FLAG_HIDDEN, on);
   lv_obj_set_flag(bubble_img, LV_OBJ_FLAG_HIDDEN, !on);
   lv_obj_set_flag(bubble_label, LV_OBJ_FLAG_HIDDEN, !on);
+  if (motion_label)
+    lv_obj_set_flag(motion_label, LV_OBJ_FLAG_HIDDEN, on);
   lvgl_port_unlock();
 }
 
@@ -192,6 +227,14 @@ void ui_play_enter(void) {
   lv_obj_set_width(bubble_label, PLAY_BUBBLE_TEXT_W);
   lv_label_set_long_mode(bubble_label, LV_LABEL_LONG_WRAP);
 
+  motion_label = lv_label_create(scr);
+  lv_obj_set_style_text_font(motion_label, BADGE_FONT_SMALL, LV_PART_MAIN);
+  lv_obj_set_style_text_color(motion_label, lv_color_hex(0x606060), LV_PART_MAIN);
+  lv_obj_set_pos(motion_label, 0, PLAY_MOTION_Y);
+  lv_obj_set_width(motion_label, 320);
+  lv_obj_set_style_text_align(motion_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_label_set_text(motion_label, "[ slow ] [ medium ] [ fast ]");
+
   status_label = lv_label_create(scr);
   lv_obj_set_style_text_font(status_label, BADGE_FONT_SMALL, LV_PART_MAIN);
   lv_obj_set_style_text_color(status_label, lv_color_white(), LV_PART_MAIN);
@@ -200,6 +243,8 @@ void ui_play_enter(void) {
   lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_label_set_long_mode(status_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
   lvgl_port_unlock();
+  wild_high_since = 0;
+  memset(&wild_shake, 0, sizeof(wild_shake));
   show_browse();
   you_refresh();
   lobby_refresh();  // kick off discovery; tick polls every POLL_MS
@@ -269,6 +314,37 @@ void ui_play_tick(uint32_t now_ms, const btn_event_t *ev) {
 
   switch (st) {
     case ST_BROWSE: {
+      int act_mg = 0;
+      accel_motion_t mot = hal_accel_motion(&act_mg);
+      motion_bar_show(mot);
+
+      bool wild_go = false;
+      if (hal_accel_ok()) {
+        if (mot >= ACCEL_MOTION_FAST) {
+          if (wild_high_since == 0) wild_high_since = now_ms;
+          else if (now_ms - wild_high_since >= WILD_HIGH_HOLD_MS) {
+            if (wild_shake.last_fire == 0 ||
+                now_ms - wild_shake.last_fire >= WILD_COOLDOWN_MS)
+              wild_go = true;
+          }
+        } else {
+          wild_high_since = 0;
+        }
+      } else {
+        wild_high_since = 0;
+      }
+      if (wild_go) {
+        wild_high_since = 0;
+        wild_shake.last_fire = now_ms ? now_ms : 1;
+        int base = game_first_level();
+        int lvl = base + ((int)(esp_random() % 3) - 1);
+        if (lvl < MIN_LEVEL) lvl = MIN_LEVEL;
+        if (lvl > MAX_LEVEL) lvl = MAX_LEVEL;
+        ESP_LOGI(TAG, "wild encounter! goose L%d act=%d", lvl, act_mg);
+        ui_duel_set_wild(SPECIES_GOOSE, lvl);
+        nav_show(SCR_DUEL);
+        return;
+      }
       if (n_peers > 0) {
         if (ev->up) {
           cursor = (cursor + n_peers - 1) % n_peers;

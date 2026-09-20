@@ -15,6 +15,7 @@
 #include "hal_led.h"
 #include "hal_display.h"
 #include "hal_i2c.h"
+#include "hal_accel.h"
 #include "net.h"
 #include "store.h"
 #include "game.h"
@@ -123,9 +124,13 @@ void app_main(void) {
   hal_display_init();
   fault_show_boot_banner();  // hold the crash reason on-screen (crash only)
   hal_i2c_init();
+  hal_accel_init();  // LIS3DH for shake/throw gestures (safe if absent)
   net_init();
   store_init();  // NVS ready (nvs_flash_init ran in net_init)
-  game_init();
+  if (hal_buttons_read() & 0x01)
+    game_factory_reset();  // hold A at boot: fresh party + 20 balls
+  else
+    game_init();
   store_note_boot(reason);  // boot forensics for `boot` cmd (brownout vs nav bug)
   debug_init();  // serial REPL over USB-Serial-JTAG
   boot_loading_screen();  // fade splash in/hold/out before the menu

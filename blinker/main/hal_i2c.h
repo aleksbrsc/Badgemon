@@ -1,4 +1,4 @@
-// Shared I2C bus: SDA=5 SCL=6 400kHz (accel 0x19 + NFC 0x26).
+// Shared I2C bus: SDA=5 SCL=6 400kHz (SC7A20 accel 0x19 + NFC 0x26).
 // Owned here; clients add/remove their own device handles.
 #pragma once
 
