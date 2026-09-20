@@ -16,6 +16,9 @@
 LV_IMAGE_DECLARE(assets_duel_bg);
 LV_IMAGE_DECLARE(assets_party_bg);
 LV_IMAGE_DECLARE(assets_bubble);
+LV_IMAGE_DECLARE(assets_speech_half);
+LV_IMAGE_DECLARE(assets_caption);
+LV_IMAGE_DECLARE(assets_caption_half);
 LV_IMAGE_DECLARE(assets_slot);
 LV_IMAGE_DECLARE(assets_cursor);
 LV_IMAGE_DECLARE(assets_cursor_sm);
@@ -41,14 +44,35 @@ LV_IMAGE_DECLARE(assets_cursor_sm);
 #define DUEL_ME_BAR_Y 135
 #define DUEL_ME_BAR_W 54
 #define DUEL_ME_BAR_H 4
-// Bottom strip: move list left, battle log right.
+// Bottom strip: caption bubbles carry the log / prompt, the speech
+// bubble carries the command menu. NOTE: speech-bubble-full art does
+// not exist yet — the FIGHT move list reuses the full caption bubble
+// (same 316x64 rect), swap to it when the art lands.
+//   caption full  (2,171)   316x64  log / wait / over / move list
+//   caption half  (2,171)   168x64  "What will X do?" prompt
+//   speech half   (172,171) 146x64  FIGHT BAG / BADGEMON RUN options
 #define DUEL_STRIP_Y 166
-#define DUEL_MOVES_X 14
-#define DUEL_MOVES_W 100
-#define DUEL_MOVE_ROW_H 17
-#define DUEL_LOG_X 120
-#define DUEL_LOG_Y 168
-#define DUEL_LOG_W 192
+#define DUEL_CAP_X 2
+#define DUEL_CAP_Y 171
+#define DUEL_LOG_X 14
+#define DUEL_LOG_Y 181
+#define DUEL_LOG_W 292
+#define DUEL_PROMPT_W 144
+#define DUEL_SPEECH_X 172
+#define DUEL_SPEECH_Y 171
+// Command options: 2 cols x 2 rows (FIGHT BAG / BADGEMON RUN).
+#define DUEL_CMD_COL_X0 190
+#define DUEL_CMD_COL_X1 244
+#define DUEL_CMD_ROW_Y0 183
+#define DUEL_CMD_ROW_Y1 207
+// Move list (inside the full caption): 2 cols x 2 rows.
+#define DUEL_MV_COL_X0 24
+#define DUEL_MV_COL_X1 174
+#define DUEL_MV_ROW_Y0 183
+#define DUEL_MV_ROW_Y1 207
+// Small cursor sits left of the active text: x - 10, y - 4.
+#define DUEL_CUR_DX 10
+#define DUEL_CUR_DY 4
 
 // Party screens (assets_party_bg): baked YOU plate + bottom dialog bar.
 #define PARTY_YOU_NAME_X 24

@@ -14,7 +14,11 @@
 //
 // Scene: assets_duel_bg (baked plates + dialog strip, see assets.h).
 // Dynamic HP bars/text are overlaid exactly on the baked plates; the
-// move list + cursor live on the dark bottom strip.
+// bottom strip is a caption bubble (battle log) that swaps for a
+// caption-half + speech bubble command menu on the player's turn:
+//   FIGHT  BAG / BADGEMON  RUN, cursor on the active option. FIGHT
+// opens the move list (2x2, same full-width caption rect —
+// speech-bubble-full art is not in assets yet).
 #include "ui_duel.h"
 #include "engine.h"
 #include "net.h"
@@ -32,14 +36,24 @@
 #include "freertos/task.h"
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
 
 static const char *TAG = "duel";
 
 #define RESEND_MS 400  // rebroadcast pending move while waiting
-// Plate text is dark-on-cream; log text is light-on-dark-strip.
+// Plate text is dark-on-cream; caption text is light-on-navy;
+// speech-bubble options are dark-on-white.
 #define PLATE_INK lv_color_hex(0x1F353C)
+#define CMD_INK lv_color_hex(0x1F353C)
 
-typedef enum { DS_SELECT, DS_WAIT, DS_OVER } duel_state_t;
+// Command menu options: (col,row). FIGHT works; the rest are stubs
+// until their screens exist (party screen owns BADGEMON later).
+static const char *CMD_OPTS[2][2] = {
+    {"FIGHT", "BAG"},
+    {"BADG\xC3\xA9MON", "RUN"},  // BADGéMON (UTF-8 é, via font fallback)
+};
+
+typedef enum { DS_LOG, DS_COMMAND, DS_SELECT, DS_WAIT, DS_OVER } duel_state_t;
 
 // ---- Tiny hardcoded dex (spike). p0 = DEX[0], p1 = DEX[1]. ----------
 // Fire vs Grass/Poison gives clear type-chart behaviour on screen:
@@ -78,7 +92,8 @@ static int my_move;       // move index I committed this turn, -1 = none
 static int opp_move;      // opponent's move for this turn, -1 = none
 static int prev_turn;     // last resolved turn (-1 until first resolve)
 static int prev_move;     // my move on prev_turn (for catch-up resends)
-static int cursor;        // move menu selection
+static int cmd_col, cmd_row;  // command menu cursor (2x2)
+static int move_idx;          // move menu cursor (linear into 2-col grid)
 static uint32_t last_send;
 static int blink_div = 0;
 
@@ -89,17 +104,30 @@ static lv_obj_t *foe_bar;
 static lv_obj_t *me_name_label;
 static lv_obj_t *me_hp_label;
 static lv_obj_t *me_bar;
-static lv_obj_t *move_btnm;
-static lv_obj_t *move_cursor;
+// Bottom strip groups (toggled per state): log (full caption), command
+// (half caption + speech + options), moves (full caption + move names).
+static lv_obj_t *cap_full_img;
 static lv_obj_t *log_label;
-
-// Matrix rows: one per move (SELECT) or a single waiting row.
-// Text copied here (buttonmatrix keeps the pointer, so it must outlive
-// temp buffers — same pattern as ui_play.c).
-static char move_text[MAX_MOVES][24];
-static const char *move_map[MAX_MOVES * 2 + 1];
+static lv_obj_t *cap_half_img;
+static lv_obj_t *prompt_label;
+static lv_obj_t *speech_img;
+static lv_obj_t *opt_labels[2][2];
+static lv_obj_t *cmd_cursor;
+static lv_obj_t *move_labels[MAX_MOVES];
+static lv_obj_t *mv_cursor;
 
 static bool for_me(const uint8_t *t) { return !memcmp(t, net_mac(), 6); }
+
+// Uppercase a mon name for the "What will X do?" prompt (names are
+// alpha-only, so byte-wise toupper is safe).
+static void name_upper(const char *in, char *out, int cap) {
+  int i = 0;
+  while (in[i] && i < cap - 1) {
+    out[i] = (char)toupper((unsigned char)in[i]);
+    i++;
+  }
+  out[i] = '\0';
+}
 
 // Green info vs red error log (errors also go to the log with context).
 static void status_show(const char *s, bool is_err) {
@@ -153,44 +181,83 @@ static void redraw_hp(void) {
   bar_set(me_bar, mp->health, mp->max_health);
 }
 
-static void redraw_moves(void) {
-  if (!move_btnm) return;
-  int rows = 0;
-  if (st == DS_SELECT) {
-    pokemon_t *mp = &mons[me_idx];
-    rows = mp->move_count;
-    for (int i = 0; i < rows; i++) {
-      snprintf(move_text[i], sizeof(move_text[i]), "%s", mp->moves[i].name);
-      move_map[i * 2] = move_text[i];
-      move_map[i * 2 + 1] = "\n";
-    }
-  } else if (st == DS_WAIT) {
-    // Single row while waiting (cursor parked on it).
-    snprintf(move_text[0], sizeof(move_text[0]), "waiting...");
-    move_map[0] = move_text[0];
-    move_map[1] = "\n";
-    rows = 1;
-  } else {
-    // OVER: hide the move list + cursor; the result lives in the log.
-    if (!lvgl_port_lock(0)) return;
-    lv_obj_set_flag(move_btnm, LV_OBJ_FLAG_HIDDEN, true);
-    lv_obj_set_flag(move_cursor, LV_OBJ_FLAG_HIDDEN, true);
-    lvgl_port_unlock();
-    return;
-  }
-  if (rows < 1) rows = 1;
-  move_map[(rows - 1) * 2 + 1] = "";
-  int sel = (st == DS_SELECT) ? cursor : 0;
-  if (sel > rows - 1) sel = rows - 1;
+// Show exactly one bottom-strip group.
+static void show_group(bool log, bool cmd, bool moves) {
+  if (!cap_full_img) return;
   if (!lvgl_port_lock(0)) return;
-  lv_obj_set_flag(move_btnm, LV_OBJ_FLAG_HIDDEN, false);
-  lv_obj_set_flag(move_cursor, LV_OBJ_FLAG_HIDDEN, false);
-  lv_buttonmatrix_set_map(move_btnm, move_map);
-  lv_buttonmatrix_set_selected_button(move_btnm, (uint16_t)sel);
-  lv_obj_set_height(move_btnm, rows * DUEL_MOVE_ROW_H + (rows - 1) * 2);
-  lv_obj_set_pos(move_cursor, DUEL_MOVES_X - 12,
-                 DUEL_STRIP_Y + sel * (DUEL_MOVE_ROW_H + 2));
+  lv_obj_set_flag(cap_full_img, LV_OBJ_FLAG_HIDDEN, !log && !moves);
+  lv_obj_set_flag(log_label, LV_OBJ_FLAG_HIDDEN, !log);
+  lv_obj_set_flag(cap_half_img, LV_OBJ_FLAG_HIDDEN, !cmd);
+  lv_obj_set_flag(prompt_label, LV_OBJ_FLAG_HIDDEN, !cmd);
+  lv_obj_set_flag(speech_img, LV_OBJ_FLAG_HIDDEN, !cmd);
+  lv_obj_set_flag(cmd_cursor, LV_OBJ_FLAG_HIDDEN, !cmd);
+  for (int c = 0; c < 2; c++)
+    for (int r = 0; r < 2; r++)
+      lv_obj_set_flag(opt_labels[c][r], LV_OBJ_FLAG_HIDDEN, !cmd);
+  for (int i = 0; i < MAX_MOVES; i++)
+    lv_obj_set_flag(move_labels[i], LV_OBJ_FLAG_HIDDEN, !moves);
+  lv_obj_set_flag(mv_cursor, LV_OBJ_FLAG_HIDDEN, !moves);
   lvgl_port_unlock();
+}
+
+// "What will X do?" prompt (also restores it after a stub quip).
+static void command_prompt(void) {
+  if (!prompt_label) return;
+  char up[24];
+  name_upper(mons[me_idx].name, up, sizeof(up));
+  char buf[48];
+  snprintf(buf, sizeof(buf), "What will\n%s do?", up);
+  if (!lvgl_port_lock(0)) return;
+  lv_label_set_text(prompt_label, buf);
+  lvgl_port_unlock();
+}
+
+static void redraw_cmd_cursor(void) {
+  if (!cmd_cursor) return;
+  int x = (cmd_col == 0 ? DUEL_CMD_COL_X0 : DUEL_CMD_COL_X1) - DUEL_CUR_DX;
+  int y = (cmd_row == 0 ? DUEL_CMD_ROW_Y0 : DUEL_CMD_ROW_Y1) - DUEL_CUR_DY;
+  if (!lvgl_port_lock(0)) return;
+  lv_obj_set_pos(cmd_cursor, x, y);
+  lvgl_port_unlock();
+}
+
+static void to_command(void) {
+  st = DS_COMMAND;
+  cmd_col = 0;
+  cmd_row = 0;
+  command_prompt();
+  show_group(false, true, false);
+  redraw_cmd_cursor();
+  hal_led_set_all(0, 0, 12);
+}
+
+static void redraw_mv_cursor(void) {
+  if (!mv_cursor) return;
+  int col = move_idx % 2, row = move_idx / 2;
+  int x = (col == 0 ? DUEL_MV_COL_X0 : DUEL_MV_COL_X1) - DUEL_CUR_DX;
+  int y = (row == 0 ? DUEL_MV_ROW_Y0 : DUEL_MV_ROW_Y1) - DUEL_CUR_DY;
+  if (!lvgl_port_lock(0)) return;
+  lv_obj_set_pos(mv_cursor, x, y);
+  lvgl_port_unlock();
+}
+
+// Fill the move list from my active mon and park the cursor on top.
+static void to_moves(void) {
+  st = DS_SELECT;
+  move_idx = 0;
+  pokemon_t *mp = &mons[me_idx];
+  if (!lvgl_port_lock(0)) return;
+  for (int i = 0; i < MAX_MOVES; i++) {
+    if (i < mp->move_count) {
+      lv_label_set_text(move_labels[i], mp->moves[i].name);
+      lv_obj_set_flag(move_labels[i], LV_OBJ_FLAG_HIDDEN, false);
+    } else {
+      lv_obj_set_flag(move_labels[i], LV_OBJ_FLAG_HIDDEN, true);
+    }
+  }
+  lvgl_port_unlock();
+  show_group(false, false, true);
+  redraw_mv_cursor();
 }
 
 // ---- Networking -----------------------------------------------------
@@ -291,18 +358,17 @@ static void resolve_turn(void) {
     bool won = is_fainted(&mons[opp_idx]);
     char over[192];
     snprintf(over, sizeof(over), "%s %s", log, won ? "YOU WIN!" : "you lose...");
+    show_group(true, false, false);
     status_show(over, !won);
-    redraw_moves();
     hal_led_set_all(won ? 0 : 40, won ? 40 : 0, 0);
     ESP_LOGI(TAG, "duel over: %s", won ? "win" : "lose");
     return;
   }
 
-  st = DS_SELECT;
-  cursor = 0;
+  st = DS_LOG;
+  show_group(true, false, false);
   status_show(log, false);
-  redraw_moves();
-  hal_led_set_all(0, 0, 12);
+  ESP_LOGI(TAG, "turn resolved, A for command menu");
 }
 
 // ---- Screen lifecycle ----------------------------------------------
@@ -336,6 +402,16 @@ static lv_obj_t *make_plate_label(lv_obj_t *scr, int x, int y) {
   return l;
 }
 
+static lv_obj_t *make_caption_text(lv_obj_t *scr, int x, int y, int w) {
+  lv_obj_t *l = lv_label_create(scr);
+  lv_obj_set_style_text_font(l, BADGE_FONT_SMALL, LV_PART_MAIN);
+  lv_obj_set_style_text_color(l, lv_color_white(), LV_PART_MAIN);
+  lv_obj_set_pos(l, x, y);
+  lv_obj_set_width(l, w);
+  lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+  return l;
+}
+
 void ui_duel_enter(void) {
   // Deterministic roles: lower MAC is player 0.
   me_is_p0 = memcmp(net_mac(), opp_mac, 6) < 0;
@@ -354,10 +430,12 @@ void ui_duel_enter(void) {
   opp_move = -1;
   prev_turn = -1;
   prev_move = -1;
-  cursor = 0;
+  cmd_col = 0;
+  cmd_row = 0;
+  move_idx = 0;
   last_send = 0;
   blink_div = 0;
-  st = DS_SELECT;
+  st = DS_COMMAND;
 
   ESP_LOGI(TAG, "enter vs '%s' as p%d (%s)", opp_name, me_is_p0 ? 0 : 1,
            mons[me_idx].name);
@@ -366,7 +444,12 @@ void ui_duel_enter(void) {
   // redraw_* guards must see NULL, not pointers to freed LVGL objects.
   foe_name_label = foe_hp_label = foe_bar = NULL;
   me_name_label = me_hp_label = me_bar = NULL;
-  move_btnm = move_cursor = log_label = NULL;
+  cap_full_img = log_label = NULL;
+  cap_half_img = prompt_label = NULL;
+  speech_img = cmd_cursor = mv_cursor = NULL;
+  for (int c = 0; c < 2; c++)
+    for (int r = 0; r < 2; r++) opt_labels[c][r] = NULL;
+  for (int i = 0; i < MAX_MOVES; i++) move_labels[i] = NULL;
 
   if (!lvgl_port_lock(0)) {
     ESP_LOGE(TAG, "could not lock LVGL on enter; screen not built");
@@ -392,78 +475,120 @@ void ui_duel_enter(void) {
   me_bar = make_hp_bar(scr, DUEL_ME_BAR_X, DUEL_ME_BAR_Y,
                        DUEL_ME_BAR_W, DUEL_ME_BAR_H);
 
-  move_btnm = lv_buttonmatrix_create(scr);
-  lv_buttonmatrix_set_one_checked(move_btnm, false);
-  lv_obj_add_state(move_btnm, LV_STATE_FOCUS_KEY);  // cursor highlight
-  lv_obj_set_size(move_btnm, DUEL_MOVES_W, DUEL_MOVE_ROW_H);
-  lv_obj_set_pos(move_btnm, DUEL_MOVES_X, DUEL_STRIP_Y);
-  lv_obj_set_style_text_font(move_btnm, badge_font(), LV_PART_ITEMS);
-  lv_obj_set_style_border_width(move_btnm, 1, LV_PART_ITEMS);
-  lv_obj_set_style_border_color(move_btnm, lv_color_hex(0x084841), LV_PART_ITEMS);
-  lv_obj_set_style_bg_color(move_btnm, lv_color_hex(0x0B6B5E), LV_PART_ITEMS);
-  lv_obj_set_style_text_color(move_btnm, lv_color_white(), LV_PART_ITEMS);
-  lv_obj_set_style_bg_color(move_btnm, lv_color_hex(0xE8442E),
-                            LV_PART_ITEMS | LV_STATE_FOCUS_KEY);
-  lv_obj_set_style_text_color(move_btnm, lv_color_white(), LV_PART_ITEMS | LV_STATE_FOCUS_KEY);
-  lv_obj_set_style_radius(move_btnm, 4, LV_PART_ITEMS);
-  lv_obj_set_style_pad_gap(move_btnm, 2, LV_PART_MAIN);
-  lv_obj_set_style_pad_all(move_btnm, 2, LV_PART_MAIN);
-
-  move_cursor = lv_image_create(scr);
-  lv_image_set_src(move_cursor, &assets_cursor_sm);
-
-  log_label = lv_label_create(scr);
-  lv_obj_set_style_text_font(log_label, BADGE_FONT_SMALL, LV_PART_MAIN);
+  // Log group: full caption bubble.
+  cap_full_img = lv_image_create(scr);
+  lv_image_set_src(cap_full_img, &assets_caption);
+  lv_obj_set_pos(cap_full_img, DUEL_CAP_X, DUEL_CAP_Y);
+  log_label = make_caption_text(scr, DUEL_LOG_X, DUEL_LOG_Y, DUEL_LOG_W);
   lv_obj_set_style_text_color(log_label, lv_color_hex(0xB0FFB0), LV_PART_MAIN);
-  lv_obj_set_pos(log_label, DUEL_LOG_X, DUEL_LOG_Y);
-  lv_obj_set_width(log_label, DUEL_LOG_W);
-  lv_label_set_long_mode(log_label, LV_LABEL_LONG_WRAP);
+
+  // Command group: half caption (prompt) + speech (options).
+  cap_half_img = lv_image_create(scr);
+  lv_image_set_src(cap_half_img, &assets_caption_half);
+  lv_obj_set_pos(cap_half_img, DUEL_CAP_X, DUEL_CAP_Y);
+  prompt_label = make_caption_text(scr, DUEL_LOG_X, DUEL_LOG_Y, DUEL_PROMPT_W);
+  speech_img = lv_image_create(scr);
+  lv_image_set_src(speech_img, &assets_speech_half);
+  lv_obj_set_pos(speech_img, DUEL_SPEECH_X, DUEL_SPEECH_Y);
+  for (int c = 0; c < 2; c++) {
+    for (int r = 0; r < 2; r++) {
+      lv_obj_t *l = lv_label_create(scr);
+      lv_obj_set_style_text_font(l, BADGE_FONT_SMALL, LV_PART_MAIN);
+      lv_obj_set_style_text_color(l, CMD_INK, LV_PART_MAIN);
+      lv_obj_set_pos(l, c == 0 ? DUEL_CMD_COL_X0 : DUEL_CMD_COL_X1,
+                     r == 0 ? DUEL_CMD_ROW_Y0 : DUEL_CMD_ROW_Y1);
+      lv_label_set_text(l, CMD_OPTS[c][r]);
+      opt_labels[c][r] = l;
+    }
+  }
+  cmd_cursor = lv_image_create(scr);
+  lv_image_set_src(cmd_cursor, &assets_cursor_sm);
+
+  // Move group: move names inside the full caption rect.
+  for (int i = 0; i < MAX_MOVES; i++) {
+    lv_obj_t *l = lv_label_create(scr);
+    lv_obj_set_style_text_font(l, BADGE_FONT_SMALL, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_pos(l, (i % 2) == 0 ? DUEL_MV_COL_X0 : DUEL_MV_COL_X1,
+                   (i / 2) == 0 ? DUEL_MV_ROW_Y0 : DUEL_MV_ROW_Y1);
+    move_labels[i] = l;
+  }
+  mv_cursor = lv_image_create(scr);
+  lv_image_set_src(mv_cursor, &assets_cursor_sm);
   lvgl_port_unlock();
 
   redraw_hp();
-  redraw_moves();
-  char intro[48];
-  snprintf(intro, sizeof(intro), "vs %s: pick a move!", opp_name);
-  status_show(intro, false);
-  hal_led_set_all(0, 0, 12);
+  to_command();
+  ESP_LOGI(TAG, "your move — command menu");
 }
 
 void ui_duel_tick(uint32_t now, const btn_event_t *ev) {
   drain_net();
 
   // Resolve as soon as both moves are in (from net or from my pick).
-  if (st != DS_OVER && my_move >= 0 && opp_move >= 0) {
+  if ((st == DS_SELECT || st == DS_WAIT) && my_move >= 0 && opp_move >= 0) {
     resolve_turn();
     return;
   }
 
   switch (st) {
-    case DS_SELECT: {
-      int count = mons[me_idx].move_count;
-      if (ev->up) {
-        cursor = (cursor + count - 1) % count;
-        redraw_moves();
-      }
-      if (ev->down) {
-        cursor = (cursor + 1) % count;
-        redraw_moves();
+    case DS_LOG:
+      if (ev->a) to_command();  // A advances to the command menu
+      break;
+    case DS_COMMAND: {
+      bool moved = false;
+      if (ev->left || ev->right) { cmd_col ^= 1; moved = true; }
+      if (ev->up || ev->down) { cmd_row ^= 1; moved = true; }
+      if (moved) {
+        command_prompt();  // clear any stub quip
+        redraw_cmd_cursor();
       }
       if (ev->a) {
-        // Lock in: send first so a radio failure keeps us in SELECT
+        if (cmd_col == 0 && cmd_row == 0) {
+          to_moves();  // FIGHT -> move list
+        } else {
+          // Stubs until their screens exist (BADGEMON owns party later).
+          const char *quip = "BAG is empty!";
+          if (cmd_col == 0) quip = "Party soon!";
+          else if (cmd_row == 1) quip = "Can't escape!";
+          if (!lvgl_port_lock(0)) break;
+          lv_label_set_text(prompt_label, quip);
+          lvgl_port_unlock();
+        }
+      }
+      break;
+    }
+    case DS_SELECT: {
+      int count = mons[me_idx].move_count;
+      if (ev->left || ev->right) {
+        int col = (move_idx % 2) ^ 1, row = move_idx / 2;
+        if (row * 2 + col < count) move_idx = row * 2 + col;
+        redraw_mv_cursor();
+      }
+      if (ev->up || ev->down) {
+        int col = move_idx % 2, row = (move_idx / 2) ^ 1;
+        if (row * 2 + col < count) move_idx = row * 2 + col;
+        redraw_mv_cursor();
+      }
+      if (ev->a) {
+        // Lock in: send first so a radio failure keeps us choosing
         // (retryable) instead of stranding us in WAIT.
-        esp_err_t err = send_move(turn, (uint8_t)cursor);
+        esp_err_t err = send_move(turn, (uint8_t)move_idx);
         if (err != ESP_OK) {
+          st = DS_LOG;
+          show_group(true, false, false);
           status_net_err("move", err);
           break;
         }
-        my_move = cursor;
+        my_move = move_idx;
         last_send = now;
         st = DS_WAIT;
-        redraw_moves();
-        status_show("locked in. waiting...", false);
+        show_group(true, false, false);
+        status_show("waiting for foe...", false);
         // Opponent may already have sent; resolve next tick via the
         // check at the top.
       }
+      if (ev->b) to_command();  // back out of FIGHT
       break;
     }
     case DS_WAIT:
@@ -494,7 +619,9 @@ bool ui_duel_home(const btn_event_t *ev) {
 
 static const char *state_name(duel_state_t s) {
   switch (s) {
-    case DS_SELECT: return "select";
+    case DS_LOG: return "log";
+    case DS_COMMAND: return "command";
+    case DS_SELECT: return "moves";
     case DS_WAIT: return "wait";
     case DS_OVER: return "over";
     default: return "?";
@@ -503,8 +630,8 @@ static const char *state_name(duel_state_t s) {
 
 void ui_duel_debug(char *out, int cap) {
   if (!out || cap < 1) return;
-  snprintf(out, cap, "duel vs='%s' st=%s turn=%u me=p%d(%s) hp=%d/%d opp=%d/%d cur=%d",
+  snprintf(out, cap, "duel vs='%s' st=%s turn=%u me=p%d(%s) hp=%d/%d opp=%d/%d cur=%d,%d/%d",
            opp_name, state_name(st), turn, me_is_p0 ? 0 : 1, mons[me_idx].name,
            mons[me_idx].health, mons[me_idx].max_health,
-           mons[opp_idx].health, mons[opp_idx].max_health, cursor);
+           mons[opp_idx].health, mons[opp_idx].max_health, cmd_col, cmd_row, move_idx);
 }

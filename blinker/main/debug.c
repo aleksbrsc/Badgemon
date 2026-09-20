@@ -470,6 +470,12 @@ static bool snap_has_kbd(const char *want) {
   return strstr(buf, want) != NULL;
 }
 
+static bool snap_has_duel(const char *want) {
+  char buf[160];
+  ui_duel_debug(buf, sizeof(buf));
+  return strstr(buf, want) != NULL;
+}
+
 static void test_menu(void) {
   printf("-- menu --\n");
   nav_show(SCR_MENU);
@@ -542,13 +548,12 @@ static void test_play_dialog(void) {
   t_tap(true, false, false, false, false, false, false);  // A accepts
   if (nav_current() == SCR_DUEL) {
     t_check("A accepts to duel", true);
-    char d[160];
-    ui_duel_debug(d, sizeof(d));
-    t_check("duel vs tester", strstr(d, "tester") != NULL);
-    // Pick the first move (A) -> should lock in and wait for opponent.
-    t_tap(true, false, false, false, false, false, false);
-    ui_duel_debug(d, sizeof(d));
-    t_check("move locks to wait", strstr(d, "st=wait") != NULL);
+    t_check("duel vs tester", snap_has_duel("tester"));
+    t_check("duel opens on command", snap_has_duel("st=command"));
+    t_tap(true, false, false, false, false, false, false);  // A on FIGHT
+    t_check("FIGHT opens moves", snap_has_duel("st=moves"));
+    t_tap(true, false, false, false, false, false, false);  // A locks move
+    t_check("move locks to wait", snap_has_duel("st=wait"));
     t_tap(false, false, true, false, false, false, false);  // Home forfeits
     t_check("home from duel exits to lobby", nav_current() == SCR_PLAY);
   } else {
