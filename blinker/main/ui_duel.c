@@ -86,7 +86,474 @@ static pokemon_t mons[2];  // mons[0] = player 0, mons[1] = player 1
 static bool me_is_p0;
 static int me_idx, opp_idx;
 static species_id_t my_species;
+static species_id_t opp_species;
 static bool opp_synced;
+
+static lv_obj_t *me_sprite;
+static lv_obj_t *foe_sprite;
+static lv_obj_t *me_ball;
+static lv_obj_t *foe_ball;
+
+// Per-strike battle sprite choreography (see sprite_battle_tick).
+static bool strike_lunge_started;
+static bool strike_damage_applied;
+
+#define RELEASE_BALL_WAIT_MS 320
+#define RELEASE_BRIGHT_MS 60
+#define RELEASE_DIM_MS 100
+#define RELEASE_FLIP_MS 65
+#define RELEASE_FLIP_TOGGLES 4
+#define SPRITE_BRIGHT_OPA LV_OPA_80
+#define SPRITE_LUNGE_MS 140
+#define SPRITE_LUNGE_DX (-8)
+#define SPRITE_LUNGE_DY 8
+#define SPRITE_TWITCH_MS 70
+#define SPRITE_TWITCH_PX 5
+#define SPRITE_FLASH_HALF_MS 250
+#define SPRITE_FLASH_COUNT 3
+#define SPRITE_FAINT_MS 800
+#define SPRITE_FAINT_SLIDE 40
+
+typedef enum {
+  SANIM_NONE,
+  SANIM_LUNGE,
+  SANIM_HURT,
+  SANIM_FAINT,
+} sprite_anim_t;
+
+static sprite_anim_t sanim;
+static uint32_t sanim_start;
+static int sanim_step;
+static lv_obj_t *sanim_obj;
+static int sanim_base_x, sanim_base_y;
+static bool me_sprite_fainted;
+static bool foe_sprite_fainted;
+static int me_idle_frame;
+static int foe_idle_frame;
+
+typedef struct {
+  bool active;
+  bool done;
+  bool queued;
+  uint8_t step;
+  uint32_t step_start;
+  int flip_i;
+} send_out_t;
+
+static send_out_t send_me, send_foe;
+
+static lv_obj_t *intro_top, *intro_bot;
+static uint32_t intro_start;
+static bool intro_done;
+
+typedef struct {
+  const lv_image_dsc_t *back0;
+  const lv_image_dsc_t *back1;
+  const lv_image_dsc_t *front0;
+  const lv_image_dsc_t *front1;
+  int back_x0, back_x1, back_y;
+  int front_x0, front_x1, front_y;
+  int poke_me_x, poke_me_y;
+  int poke_foe_x, poke_foe_y;
+} spr_layout_t;
+
+static bool spr_layout_for(species_id_t sp, spr_layout_t *l) {
+  if (!l) return false;
+  memset(l, 0, sizeof(*l));
+  switch (sp) {
+    case SPECIES_CHARMANDER:
+      l->back0 = &assets_vinyl_back_1;
+      l->back1 = &assets_vinyl_back_2;
+      l->front0 = &assets_vinyl_front_1;
+      l->front1 = &assets_vinyl_front_2;
+      l->back_x0 = DUEL_VINYL_BACK_X1;
+      l->back_x1 = DUEL_VINYL_BACK_X2;
+      l->back_y = DUEL_VINYL_BACK_Y;
+      l->front_x0 = DUEL_VINYL_FOE_X1;
+      l->front_x1 = DUEL_VINYL_FOE_X2;
+      l->front_y = DUEL_VINYL_FOE_Y;
+      l->poke_me_x = DUEL_VINYL_POKEBALL_ME_X;
+      l->poke_me_y = DUEL_VINYL_POKEBALL_ME_Y;
+      l->poke_foe_x = DUEL_VINYL_POKEBALL_FOE_X;
+      l->poke_foe_y = DUEL_VINYL_POKEBALL_FOE_Y;
+      return true;
+    case SPECIES_SQUIRTLE:
+      l->back0 = &assets_ginny_back_1;
+      l->back1 = &assets_ginny_back_2;
+      l->front0 = &assets_ginny_front_1;
+      l->front1 = &assets_ginny_front_2;
+      l->back_x0 = DUEL_GINNY_BACK_X;
+      l->back_x1 = DUEL_GINNY_BACK_X;
+      l->back_y = DUEL_GINNY_BACK_Y;
+      l->front_x0 = DUEL_GINNY_FOE_X;
+      l->front_x1 = DUEL_GINNY_FOE_X;
+      l->front_y = DUEL_GINNY_FOE_Y;
+      l->poke_me_x = DUEL_GINNY_POKEBALL_ME_X;
+      l->poke_me_y = DUEL_GINNY_POKEBALL_ME_Y;
+      l->poke_foe_x = DUEL_GINNY_POKEBALL_FOE_X;
+      l->poke_foe_y = DUEL_GINNY_POKEBALL_FOE_Y;
+      return true;
+    case SPECIES_BULBASAUR:
+      l->back0 = &assets_patchy_back_1;
+      l->back1 = &assets_patchy_back_2;
+      l->front0 = &assets_patchy_front_1;
+      l->front1 = &assets_patchy_front_2;
+      l->back_x0 = DUEL_PATCH_BACK_X;
+      l->back_x1 = DUEL_PATCH_BACK_X;
+      l->back_y = DUEL_PATCH_BACK_Y;
+      l->front_x0 = DUEL_PATCH_FOE_X;
+      l->front_x1 = DUEL_PATCH_FOE_X;
+      l->front_y = DUEL_PATCH_FOE_Y;
+      l->poke_me_x = DUEL_PATCH_POKEBALL_ME_X;
+      l->poke_me_y = DUEL_PATCH_POKEBALL_ME_Y;
+      l->poke_foe_x = DUEL_PATCH_POKEBALL_FOE_X;
+      l->poke_foe_y = DUEL_PATCH_POKEBALL_FOE_Y;
+      return true;
+    default:
+      return false;
+  }
+}
+
+static bool species_has_sprite(species_id_t sp) {
+  spr_layout_t tmp;
+  return spr_layout_for(sp, &tmp);
+}
+
+static void spr_back_xy(species_id_t sp, int frame, int *x, int *y) {
+  spr_layout_t l;
+  if (!spr_layout_for(sp, &l)) return;
+  *x = frame ? l.back_x1 : l.back_x0;
+  *y = l.back_y;
+}
+
+static void spr_front_xy(species_id_t sp, int frame, int *x, int *y) {
+  spr_layout_t l;
+  if (!spr_layout_for(sp, &l)) return;
+  *x = frame ? l.front_x1 : l.front_x0;
+  *y = l.front_y;
+}
+
+static void sprite_set_opa(lv_obj_t *img, lv_opa_t opa) {
+  if (!img) return;
+  if (!lvgl_port_lock(0)) return;
+  lv_obj_set_style_image_opa(img, opa, LV_PART_MAIN);
+  lvgl_port_unlock();
+}
+
+static void sprite_set_bright(lv_obj_t *img, lv_opa_t recolor_opa) {
+  if (!img) return;
+  if (!lvgl_port_lock(0)) return;
+  lv_obj_set_style_image_recolor(img, lv_color_white(), LV_PART_MAIN);
+  lv_obj_set_style_image_recolor_opa(img, recolor_opa, LV_PART_MAIN);
+  lv_obj_set_style_image_opa(img, LV_OPA_COVER, LV_PART_MAIN);
+  lvgl_port_unlock();
+}
+
+static void sprite_set_pos_off(lv_obj_t *img, int base_x, int base_y, int dx,
+                              int dy) {
+  if (!img) return;
+  if (!lvgl_port_lock(0)) return;
+  lv_obj_set_pos(img, base_x + dx, base_y + dy);
+  lvgl_port_unlock();
+}
+
+static void me_sprite_layout(int frame, int dx, int dy) {
+  spr_layout_t l;
+  if (!me_sprite || me_sprite_fainted || !spr_layout_for(my_species, &l)) return;
+  int x = frame ? l.back_x1 : l.back_x0;
+  if (!lvgl_port_lock(0)) return;
+  lv_image_set_src(me_sprite, frame ? l.back1 : l.back0);
+  lv_obj_set_pos(me_sprite, x + dx, l.back_y + dy);
+  lvgl_port_unlock();
+}
+
+static void foe_sprite_layout(int frame, int dx, int dy) {
+  spr_layout_t l;
+  if (!foe_sprite || foe_sprite_fainted || !spr_layout_for(opp_species, &l))
+    return;
+  int x = frame ? l.front_x1 : l.front_x0;
+  if (!lvgl_port_lock(0)) return;
+  lv_image_set_src(foe_sprite, frame ? l.front1 : l.front0);
+  lv_obj_set_pos(foe_sprite, x + dx, l.front_y + dy);
+  lvgl_port_unlock();
+}
+
+static lv_obj_t *sprite_for_player_idx(int idx) {
+  return idx == me_idx ? me_sprite : foe_sprite;
+}
+
+static void sprite_refresh_visibility(void) {
+  if (!lvgl_port_lock(0)) return;
+  if (me_sprite) {
+    bool show = species_has_sprite(my_species) && !me_sprite_fainted &&
+                send_me.done;
+    lv_obj_set_flag(me_sprite, LV_OBJ_FLAG_HIDDEN, !show);
+  }
+  if (foe_sprite) {
+    bool show = opp_synced && species_has_sprite(opp_species) &&
+                !foe_sprite_fainted && send_foe.done;
+    lv_obj_set_flag(foe_sprite, LV_OBJ_FLAG_HIDDEN, !show);
+  }
+  lvgl_port_unlock();
+  if (me_sprite && species_has_sprite(my_species) && !me_sprite_fainted &&
+      send_me.done)
+    me_sprite_layout(me_idle_frame, 0, 0);
+  if (foe_sprite && opp_synced && species_has_sprite(opp_species) &&
+      !foe_sprite_fainted && send_foe.done)
+    foe_sprite_layout(foe_idle_frame, 0, 0);
+}
+
+static bool send_out_busy(void) { return send_me.active || send_foe.active; }
+
+static bool sprite_anim_busy(void) {
+  return sanim != SANIM_NONE || send_out_busy();
+}
+
+static void send_out_queue(send_out_t *so, species_id_t sp) {
+  if (so->done || so->active || so->queued) return;
+  if (!species_has_sprite(sp)) {
+    so->done = true;
+    return;
+  }
+  so->queued = true;
+}
+
+static void send_out_begin(send_out_t *so, lv_obj_t *ball, lv_obj_t *mon,
+                           bool is_me, species_id_t sp) {
+  spr_layout_t lay;
+  if (!ball || !mon || so->done || so->active || !spr_layout_for(sp, &lay))
+    return;
+  so->active = true;
+  so->queued = false;
+  so->step = 0;
+  so->flip_i = 0;
+  so->step_start = xTaskGetTickCount() * portTICK_PERIOD_MS;
+  if (is_me)
+    me_idle_frame = 0;
+  else
+    foe_idle_frame = 0;
+  if (!lvgl_port_lock(0)) return;
+  lv_image_set_src(ball, is_me ? &assets_pokeball : &assets_pokeball_foe);
+  lv_obj_set_pos(ball, is_me ? lay.poke_me_x : lay.poke_foe_x,
+                 is_me ? lay.poke_me_y : lay.poke_foe_y);
+  lv_obj_clear_flag(ball, LV_OBJ_FLAG_HIDDEN);
+  sprite_set_bright(ball, 0);
+  lv_obj_set_flag(mon, LV_OBJ_FLAG_HIDDEN, true);
+  lvgl_port_unlock();
+}
+
+static void send_out_finish(send_out_t *so, lv_obj_t *ball, lv_obj_t *mon,
+                            bool is_me) {
+  so->active = false;
+  so->done = true;
+  if (!lvgl_port_lock(0)) return;
+  lv_obj_set_flag(ball, LV_OBJ_FLAG_HIDDEN, true);
+  sprite_set_bright(ball, 0);
+  sprite_set_bright(mon, 0);
+  lvgl_port_unlock();
+  if (is_me)
+    me_idle_frame = 0;
+  else
+    foe_idle_frame = 0;
+  if (is_me)
+    me_sprite_layout(0, 0, 0);
+  else
+    foe_sprite_layout(0, 0, 0);
+  sprite_refresh_visibility();
+}
+
+static void send_out_tick_one(send_out_t *so, lv_obj_t *ball, lv_obj_t *mon,
+                              bool is_me, species_id_t sp, uint32_t now) {
+  if (!so->active || !ball || !mon) return;
+  uint32_t el = now - so->step_start;
+  switch (so->step) {
+    case 0:
+      if (el >= RELEASE_BALL_WAIT_MS) {
+        so->step = 1;
+        so->step_start = now;
+        if (!lvgl_port_lock(0)) return;
+        lv_image_set_src(ball, is_me ? &assets_pokeball_open
+                                     : &assets_pokeball_open_foe);
+        lv_obj_clear_flag(mon, LV_OBJ_FLAG_HIDDEN);
+        if (is_me) {
+          me_idle_frame = 0;
+          me_sprite_layout(0, 0, 0);
+        } else {
+          foe_idle_frame = 0;
+          foe_sprite_layout(0, 0, 0);
+        }
+        sprite_set_bright(ball, SPRITE_BRIGHT_OPA);
+        sprite_set_bright(mon, SPRITE_BRIGHT_OPA);
+        lvgl_port_unlock();
+      }
+      break;
+    case 1:
+      if (el >= RELEASE_BRIGHT_MS) {
+        so->step = 2;
+        so->step_start = now;
+      }
+      break;
+    case 2: {
+      if (el >= RELEASE_DIM_MS) {
+        sprite_set_bright(ball, 0);
+        sprite_set_bright(mon, 0);
+        so->step = 3;
+        so->step_start = now;
+        so->flip_i = 0;
+        break;
+      }
+      lv_opa_t fade = (lv_opa_t)(SPRITE_BRIGHT_OPA *
+                                 (int)(RELEASE_DIM_MS - el) / RELEASE_DIM_MS);
+      sprite_set_bright(ball, fade);
+      sprite_set_bright(mon, fade);
+      break;
+    }
+    case 3:
+      if (el >= RELEASE_FLIP_MS) {
+        so->flip_i++;
+        so->step_start = now;
+        if (is_me) {
+          me_idle_frame ^= 1;
+          me_sprite_layout(me_idle_frame, 0, 0);
+        } else {
+          foe_idle_frame ^= 1;
+          foe_sprite_layout(foe_idle_frame, 0, 0);
+        }
+        if (so->flip_i >= RELEASE_FLIP_TOGGLES) {
+          send_out_finish(so, ball, mon, is_me);
+        }
+      }
+      break;
+  }
+}
+
+static void send_out_try_start(void) {
+  if (!intro_done || !opp_synced) return;
+  if (species_has_sprite(my_species) && send_me.queued && !send_me.active &&
+      !send_me.done)
+    send_out_begin(&send_me, me_ball, me_sprite, true, my_species);
+  if (species_has_sprite(opp_species) && send_foe.queued && !send_foe.active &&
+      !send_foe.done)
+    send_out_begin(&send_foe, foe_ball, foe_sprite, false, opp_species);
+}
+
+static void send_out_tick(uint32_t now) {
+  send_out_try_start();
+  send_out_tick_one(&send_me, me_ball, me_sprite, true, my_species, now);
+  send_out_tick_one(&send_foe, foe_ball, foe_sprite, false, opp_species, now);
+}
+
+static void sprite_anim_begin(sprite_anim_t kind, lv_obj_t *obj, int base_x,
+                              int base_y) {
+  sanim = kind;
+  sanim_start = xTaskGetTickCount() * portTICK_PERIOD_MS;
+  sanim_step = 0;
+  sanim_obj = obj;
+  sanim_base_x = base_x;
+  sanim_base_y = base_y;
+}
+
+static void sprite_lunge_foe_start(void) {
+  int x, y;
+  if (!foe_sprite || foe_sprite_fainted) return;
+  spr_front_xy(opp_species, foe_idle_frame, &x, &y);
+  sprite_anim_begin(SANIM_LUNGE, foe_sprite, x, y);
+}
+
+static void sprite_hurt_start(int def_idx) {
+  lv_obj_t *obj = sprite_for_player_idx(def_idx);
+  if (!obj) return;
+  if (def_idx == me_idx && (me_sprite_fainted || !species_has_sprite(my_species)))
+    return;
+  if (def_idx == opp_idx &&
+      (foe_sprite_fainted || !species_has_sprite(opp_species)))
+    return;
+  int x = 0, y = 0;
+  if (def_idx == me_idx)
+    spr_back_xy(my_species, me_idle_frame, &x, &y);
+  else
+    spr_front_xy(opp_species, foe_idle_frame, &x, &y);
+  sprite_anim_begin(SANIM_HURT, obj, x, y);
+}
+
+static void sprite_faint_start(int def_idx) {
+  lv_obj_t *obj = sprite_for_player_idx(def_idx);
+  if (!obj) return;
+  int x = 0, y = 0;
+  if (def_idx == me_idx)
+    spr_back_xy(my_species, me_idle_frame, &x, &y);
+  else
+    spr_front_xy(opp_species, foe_idle_frame, &x, &y);
+  if (def_idx == me_idx)
+    me_sprite_fainted = true;
+  else
+    foe_sprite_fainted = true;
+  sprite_anim_begin(SANIM_FAINT, obj, x, y);
+}
+
+static void sprite_anim_finish(void) {
+  sanim = SANIM_NONE;
+  sanim_obj = NULL;
+  sprite_refresh_visibility();
+}
+
+static void sprite_battle_tick(uint32_t now) {
+  send_out_tick(now);
+  if (sanim == SANIM_NONE) return;
+  uint32_t el = now - sanim_start;
+  if (sanim == SANIM_LUNGE) {
+    if (el < SPRITE_LUNGE_MS) {
+      sprite_set_pos_off(sanim_obj, sanim_base_x, sanim_base_y, SPRITE_LUNGE_DX,
+                         SPRITE_LUNGE_DY);
+    } else if (el < SPRITE_LUNGE_MS * 2) {
+      sprite_set_pos_off(sanim_obj, sanim_base_x, sanim_base_y, 0, 0);
+    } else {
+      sprite_anim_finish();
+    }
+    return;
+  }
+  if (sanim == SANIM_HURT) {
+    // Twitch left/right, then opacity flash 250 ms on/off x3.
+    int twitch_steps = 4;
+    uint32_t twitch_end = twitch_steps * SPRITE_TWITCH_MS;
+    if (el < twitch_end) {
+      int step = (int)(el / SPRITE_TWITCH_MS);
+      int dx = (step % 2 == 0) ? -SPRITE_TWITCH_PX : SPRITE_TWITCH_PX;
+      sprite_set_pos_off(sanim_obj, sanim_base_x, sanim_base_y, dx, 0);
+      sprite_set_opa(sanim_obj, LV_OPA_COVER);
+    } else {
+      uint32_t flash_el = el - twitch_end;
+      uint32_t cycle = flash_el / SPRITE_FLASH_HALF_MS;
+      if (cycle >= (uint32_t)(SPRITE_FLASH_COUNT * 2)) {
+        sprite_set_pos_off(sanim_obj, sanim_base_x, sanim_base_y, 0, 0);
+        sprite_set_opa(sanim_obj, LV_OPA_COVER);
+        sprite_anim_finish();
+      } else {
+        sprite_set_pos_off(sanim_obj, sanim_base_x, sanim_base_y, 0, 0);
+        sprite_set_opa(sanim_obj,
+                       (cycle % 2 == 0) ? LV_OPA_COVER : LV_OPA_TRANSP);
+      }
+    }
+    return;
+  }
+  if (sanim == SANIM_FAINT) {
+    if (el >= SPRITE_FAINT_MS) {
+      sprite_set_opa(sanim_obj, LV_OPA_TRANSP);
+      if (!lvgl_port_lock(0)) return;
+      lv_obj_set_flag(sanim_obj, LV_OBJ_FLAG_HIDDEN, true);
+      lvgl_port_unlock();
+      sprite_anim_finish();
+      return;
+    }
+    int slide = (sanim_obj == me_sprite) ? -SPRITE_FAINT_SLIDE : SPRITE_FAINT_SLIDE;
+    int dx = (int)((long)slide * (long)el / (long)SPRITE_FAINT_MS);
+    lv_opa_t opa = (lv_opa_t)(255 - (255 * (int)el / (int)SPRITE_FAINT_MS));
+    sprite_set_pos_off(sanim_obj, sanim_base_x, sanim_base_y, dx, 0);
+    sprite_set_opa(sanim_obj, opa);
+  }
+}
+
+// Battle intro wipe (FireRed style):
 
 static duel_state_t st;
 static uint8_t turn;      // current turn number (wraps at 256; fine)
@@ -96,7 +563,12 @@ static int prev_turn;     // last resolved turn (-1 until first resolve)
 static int prev_move;     // my move on prev_turn (for catch-up resends)
 static int cmd_col, cmd_row;  // command menu cursor (2x2)
 static int move_idx;          // move menu cursor (linear into 2-col grid)
+static int last_move_idx;     // last move used this duel (re-highlight next turn)
 static uint32_t last_send;
+
+#define MOVE_PP_COLOR lv_color_hex(0xB8B8B8)
+#define MOVE_SEL_COLOR lv_color_hex(0xFFE45E)
+#define MOVE_EMPTY_COLOR lv_color_hex(0x707070)
 
 // Caption text streamer + strike-phase turn recap. resolve_turn()
 // queues one strike per attacker; DS_LOG streams "<atk> used <move>!",
@@ -113,6 +585,7 @@ typedef struct {
   char move[24];      // move name ("used" line)
   char eff[48];       // outcome line, "" when neutral (skipped)
   int dmg;            // precomputed, applied after the "used" hold
+  int power;          // move base power (0 = non-attacking)
 } strike_t;
 static strike_t strikes[2];
 static int n_strikes, strike_i;
@@ -122,6 +595,8 @@ static int n_strikes, strike_i;
 // line (errors) that falls back to the command menu.
 typedef enum {
   SP_USED,
+  SP_HURT,          // defender hit reaction (twitch + flash)
+  SP_FAINT,         // slide off + fade when HP hits 0
   SP_EFF,
   SP_NEUTRAL_HOLD,
   SP_POST_TURN,
@@ -152,13 +627,8 @@ static lv_obj_t *speech_img;
 static lv_obj_t *opt_labels[2][2];
 static lv_obj_t *cmd_cursor;
 static lv_obj_t *move_labels[MAX_MOVES];
+static lv_obj_t *move_pp_labels[MAX_MOVES];
 static lv_obj_t *mv_cursor;
-
-// Battle intro wipe (FireRed style): two full-width black bars meet at
-// the middle of the screen, then slide apart over INTRO_MS.
-static lv_obj_t *intro_top, *intro_bot;
-static uint32_t intro_start;
-static bool intro_done;
 
 // Party overlay (opened with BADGEMON): fullscreen party art + current
 // mon plate + one slot row per extra mon (none yet) + back hint.
@@ -493,10 +963,79 @@ static void show_group(bool log, bool cmd, bool moves) {
   for (int c = 0; c < 2; c++)
     for (int r = 0; r < 2; r++)
       lv_obj_set_flag(opt_labels[c][r], LV_OBJ_FLAG_HIDDEN, !cmd);
-  for (int i = 0; i < MAX_MOVES; i++)
+  for (int i = 0; i < MAX_MOVES; i++) {
     lv_obj_set_flag(move_labels[i], LV_OBJ_FLAG_HIDDEN, !moves);
+    if (move_pp_labels[i])
+      lv_obj_set_flag(move_pp_labels[i], LV_OBJ_FLAG_HIDDEN, !moves);
+  }
   lv_obj_set_flag(mv_cursor, LV_OBJ_FLAG_HIDDEN, !moves);
   lvgl_port_unlock();
+}
+
+static int move_max_pp(species_id_t sp, int move_i) {
+  const pokemon_t *t = species_template(sp);
+  if (!t || move_i < 0 || move_i >= t->move_count) return 0;
+  return t->moves[move_i].pp;
+}
+
+static void mon_restore_move_pp(pokemon_t *p, species_id_t sp) {
+  const pokemon_t *t = species_template(sp);
+  if (!p || !t) return;
+  for (int i = 0; i < p->move_count && i < MAX_MOVES; i++)
+    p->moves[i].pp = t->moves[i].pp;
+}
+
+static bool move_usable(int idx) {
+  pokemon_t *mp = &mons[me_idx];
+  return idx >= 0 && idx < mp->move_count && mp->moves[idx].pp > 0;
+}
+
+static void redraw_mv_cursor(void);
+
+static int move_pick_default(void) {
+  pokemon_t *mp = &mons[me_idx];
+  if (last_move_idx >= 0 && last_move_idx < mp->move_count &&
+      mp->moves[last_move_idx].pp > 0)
+    return last_move_idx;
+  for (int i = 0; i < mp->move_count; i++)
+    if (mp->moves[i].pp > 0) return i;
+  return 0;
+}
+
+static void move_list_redraw(void) {
+  pokemon_t *mp = &mons[me_idx];
+  if (!lvgl_port_lock(0)) return;
+  for (int i = 0; i < MAX_MOVES; i++) {
+    int mx = (i % 2) == 0 ? DUEL_MV_COL_X0 : DUEL_MV_COL_X1;
+    int my = (i / 2) == 0 ? DUEL_MV_ROW_Y0 : DUEL_MV_ROW_Y1;
+    if (i >= mp->move_count) {
+      lv_obj_set_flag(move_labels[i], LV_OBJ_FLAG_HIDDEN, true);
+      if (move_pp_labels[i])
+        lv_obj_set_flag(move_pp_labels[i], LV_OBJ_FLAG_HIDDEN, true);
+      continue;
+    }
+    lv_obj_set_flag(move_labels[i], LV_OBJ_FLAG_HIDDEN, false);
+    lv_label_set_text(move_labels[i], mp->moves[i].name);
+    bool empty = mp->moves[i].pp <= 0;
+    lv_color_t name_c =
+        empty ? MOVE_EMPTY_COLOR
+              : (i == move_idx ? MOVE_SEL_COLOR : lv_color_white());
+    lv_obj_set_style_text_color(move_labels[i], name_c, LV_PART_MAIN);
+    if (move_pp_labels[i]) {
+      lv_obj_set_flag(move_pp_labels[i], LV_OBJ_FLAG_HIDDEN, false);
+      char pp[16];
+      int max = move_max_pp(my_species, i);
+      snprintf(pp, sizeof(pp), "%d/%d", mp->moves[i].pp, max);
+      lv_label_set_text(move_pp_labels[i], pp);
+      lv_obj_set_style_text_color(move_pp_labels[i], MOVE_PP_COLOR,
+                                  LV_PART_MAIN);
+      lv_obj_update_layout(move_labels[i]);
+      int32_t name_w = lv_obj_get_width(move_labels[i]);
+      lv_obj_set_pos(move_pp_labels[i], mx + name_w + DUEL_MV_PP_GAP, my);
+    }
+  }
+  lvgl_port_unlock();
+  redraw_mv_cursor();
 }
 
 // ---- LEDs -----------------------------------------------------------
@@ -550,7 +1089,7 @@ static void win_leds(uint32_t now) {
   for (int k = 0; k < 3; k++) {
     int idx = (pos + k * 2) % HAL_LED_COUNT;
     uint8_t r, g, b;
-    led_wheel((uint8_t)(base + k * 85), 48, &r, &g, &b);
+    led_wheel((uint8_t)(base + k * 85), 34, &r, &g, &b);
     hal_led_set_one(idx, r, g, b);
   }
   hal_led_show();
@@ -566,21 +1105,21 @@ static void duel_leds_update(uint32_t now) {
     if (over_won)
       win_leds(now);
     else
-      hal_led_set_all(28, 0, 0);
+      hal_led_set_all(18, 0, 0);
     return;
   }
   uint8_t r, g, b;
   if (st == DS_WAIT) {
-    hp_led_rgb(mons[me_idx].health, mons[me_idx].max_health, 32, &r, &g, &b);
+    hp_led_rgb(mons[me_idx].health, mons[me_idx].max_health, 22, &r, &g, &b);
     hal_led_set_all(r, g, b);
     return;
   }
   if (now < dmg_flash_until) {
     bool on = ((now / 120) % 2) == 0;
-    hp_led_rgb(mons[me_idx].health, mons[me_idx].max_health, on ? 96 : 6, &r,
+    hp_led_rgb(mons[me_idx].health, mons[me_idx].max_health, on ? 65 : 4, &r,
                &g, &b);
   } else {
-    hp_led_rgb(mons[me_idx].health, mons[me_idx].max_health, 32, &r, &g, &b);
+    hp_led_rgb(mons[me_idx].health, mons[me_idx].max_health, 22, &r, &g, &b);
   }
   hal_led_set_all(r, g, b);
 }
@@ -626,23 +1165,12 @@ static void redraw_mv_cursor(void) {
   lvgl_port_unlock();
 }
 
-// Fill the move list from my active mon and park the cursor on top.
+// Fill the move list; cursor starts on last move used (if it still has PP).
 static void to_moves(void) {
   st = DS_SELECT;
-  move_idx = 0;
-  pokemon_t *mp = &mons[me_idx];
-  if (!lvgl_port_lock(0)) return;
-  for (int i = 0; i < MAX_MOVES; i++) {
-    if (i < mp->move_count) {
-      lv_label_set_text(move_labels[i], mp->moves[i].name);
-      lv_obj_set_flag(move_labels[i], LV_OBJ_FLAG_HIDDEN, false);
-    } else {
-      lv_obj_set_flag(move_labels[i], LV_OBJ_FLAG_HIDDEN, true);
-    }
-  }
-  lvgl_port_unlock();
+  move_idx = move_pick_default();
   show_group(false, false, true);
-  redraw_mv_cursor();
+  move_list_redraw();
 }
 
 // ---- Networking -----------------------------------------------------
@@ -664,6 +1192,9 @@ static bool apply_opp_setup(const uint8_t *snap) {
   memcpy(&hp, snap + 6, 2);
   pokemon_from_species(&mons[opp_idx], sp);
   pokemon_apply_progress(&mons[opp_idx], level, (int)exp, (int)hp);
+  opp_species = sp;
+  send_out_queue(&send_foe, opp_species);
+  sprite_refresh_visibility();
   return mons[opp_idx].move_count > 0;
 }
 
@@ -681,9 +1212,37 @@ static void duel_sync_done(void) {
   opp_synced = true;
   st = DS_COMMAND;
   redraw_hp();
+  send_out_queue(&send_me, my_species);
+  send_out_queue(&send_foe, opp_species);
+  sprite_refresh_visibility();
   to_command();
   intro_start_bars();
   ESP_LOGI(TAG, "sync done — your move");
+}
+
+static void strike_flow_reset(void) {
+  strike_lunge_started = false;
+  strike_damage_applied = false;
+}
+
+static void strike_go_eff(void) {
+  if (strikes[strike_i].eff[0]) {
+    log_stream_start(strikes[strike_i].eff, false);
+    strike_phase = SP_EFF;
+  } else {
+    neutral_until = duel_now + RECAP_HOLD_MS;
+    strike_phase = SP_NEUTRAL_HOLD;
+  }
+}
+
+static void strike_after_hit(void) {
+  int def = strikes[strike_i].def;
+  if (mons[def].health <= 0) {
+    sprite_faint_start(def);
+    strike_phase = SP_FAINT;
+  } else {
+    strike_go_eff();
+  }
 }
 
 static void duel_save_and_exit(void) {
@@ -806,6 +1365,7 @@ static void resolve_turn(void) {
   strikes[0].atk = 0;
   strikes[0].def = 1;
   strikes[0].dmg = d0;
+  strikes[0].power = a0.power;
   strncpy(strikes[0].move, a0.name, sizeof(strikes[0].move) - 1);
   strikes[0].move[sizeof(strikes[0].move) - 1] = '\0';
   eff_text(strikes[0].eff, sizeof(strikes[0].eff), e0, mons[1].name,
@@ -819,6 +1379,7 @@ static void resolve_turn(void) {
     strikes[1].atk = 1;
     strikes[1].def = 0;
     strikes[1].dmg = d1;
+    strikes[1].power = a1.power;
     strncpy(strikes[1].move, a1.name, sizeof(strikes[1].move) - 1);
     strikes[1].move[sizeof(strikes[1].move) - 1] = '\0';
     eff_text(strikes[1].eff, sizeof(strikes[1].eff), e1, mons[0].name,
@@ -846,12 +1407,19 @@ static void resolve_turn(void) {
   my_move = -1;
   opp_move = -1;
 
+  if (mv0 >= 0 && mv0 < mons[0].move_count && mons[0].moves[mv0].pp > 0)
+    mons[0].moves[mv0].pp--;
+  if (n_strikes == 2 && mv1 >= 0 && mv1 < mons[1].move_count &&
+      mons[1].moves[mv1].pp > 0)
+    mons[1].moves[mv1].pp--;
+
   over_pending = faint1 || faint0;
   over_won = (opp_idx == 1) ? faint1 : faint0;
   ESP_LOGI(TAG, "turn resolved, streaming strikes (n=%d)", n_strikes);
 
   strike_i = 0;
   strike_phase = SP_USED;
+  strike_flow_reset();
   st = DS_LOG;
   show_group(true, false, false);
   char used[64];
@@ -927,6 +1495,7 @@ void ui_duel_enter(void) {
   CHECK(game_load_active(&mons[me_idx]), "game_load_active failed");
   CHECK(mons[me_idx].move_count > 0 && mons[me_idx].move_count <= MAX_MOVES,
         "%s has bad move_count %d", mons[me_idx].name, mons[me_idx].move_count);
+  mon_restore_move_pp(&mons[me_idx], my_species);
 
   turn = 0;
   my_move = -1;
@@ -936,6 +1505,7 @@ void ui_duel_enter(void) {
   cmd_col = 0;
   cmd_row = 0;
   move_idx = 0;
+  last_move_idx = -1;
   last_send = 0;
   duel_now = 0;
   stream_full[0] = '\0';
@@ -950,6 +1520,14 @@ void ui_duel_enter(void) {
   hp_shown = hp_num_from = hp_num_to = 0;
   hp_num_start = 0;
   dmg_flash_until = 0;
+  opp_species = my_species;
+  me_sprite_fainted = foe_sprite_fainted = false;
+  me_idle_frame = foe_idle_frame = 0;
+  sanim = SANIM_NONE;
+  sanim_obj = NULL;
+  memset(&send_me, 0, sizeof(send_me));
+  memset(&send_foe, 0, sizeof(send_foe));
+  strike_flow_reset();
   intro_top = intro_bot = NULL;
   intro_done = true;
   n_party_objs = 0;
@@ -964,13 +1542,17 @@ void ui_duel_enter(void) {
   // redraw_* guards must see NULL, not pointers to freed LVGL objects.
   foe_name_label = foe_level_label = foe_hp_label = foe_bar = NULL;
   me_name_label = me_level_label = me_hp_label = me_bar = NULL;
+  me_sprite = foe_sprite = me_ball = foe_ball = NULL;
   cap_full_img = log_label = NULL;
   cap_half_img = prompt_label = NULL;
   speech_img = cmd_cursor = mv_cursor = NULL;
   intro_top = intro_bot = NULL;
   for (int c = 0; c < 2; c++)
     for (int r = 0; r < 2; r++) opt_labels[c][r] = NULL;
-  for (int i = 0; i < MAX_MOVES; i++) move_labels[i] = NULL;
+  for (int i = 0; i < MAX_MOVES; i++) {
+    move_labels[i] = NULL;
+    move_pp_labels[i] = NULL;
+  }
 
   if (!lvgl_port_lock(0)) {
     ESP_LOGE(TAG, "could not lock LVGL on enter; screen not built");
@@ -982,6 +1564,18 @@ void ui_duel_enter(void) {
   lv_obj_t *bg = lv_image_create(scr);
   lv_image_set_src(bg, &assets_duel_bg);
   lv_obj_set_pos(bg, 0, 0);
+
+  me_sprite = lv_image_create(scr);
+  lv_obj_add_flag(me_sprite, LV_OBJ_FLAG_HIDDEN);
+  foe_sprite = lv_image_create(scr);
+  lv_obj_add_flag(foe_sprite, LV_OBJ_FLAG_HIDDEN);
+  me_ball = lv_image_create(scr);
+  lv_image_set_src(me_ball, &assets_pokeball);
+  lv_obj_add_flag(me_ball, LV_OBJ_FLAG_HIDDEN);
+  foe_ball = lv_image_create(scr);
+  lv_image_set_src(foe_ball, &assets_pokeball_foe);
+  lv_obj_add_flag(foe_ball, LV_OBJ_FLAG_HIDDEN);
+  me_sprite_layout(0, 0, 0);
 
   // Names are static for the duel; HP numbers + bars redraw every turn.
   // Foe HP numbers are hidden (bar only).
@@ -1040,19 +1634,25 @@ void ui_duel_enter(void) {
 
   // Move group: move names inside the full caption rect.
   for (int i = 0; i < MAX_MOVES; i++) {
+    int mx = (i % 2) == 0 ? DUEL_MV_COL_X0 : DUEL_MV_COL_X1;
+    int my = (i / 2) == 0 ? DUEL_MV_ROW_Y0 : DUEL_MV_ROW_Y1;
     lv_obj_t *l = lv_label_create(scr);
     lv_obj_set_style_text_font(l, BADGE_FONT_SMALL, LV_PART_MAIN);
     lv_obj_set_style_text_color(l, lv_color_white(), LV_PART_MAIN);
-    lv_obj_set_pos(l, (i % 2) == 0 ? DUEL_MV_COL_X0 : DUEL_MV_COL_X1,
-                   (i / 2) == 0 ? DUEL_MV_ROW_Y0 : DUEL_MV_ROW_Y1);
+    lv_obj_set_pos(l, mx, my);
     move_labels[i] = l;
+    lv_obj_t *pp = lv_label_create(scr);
+    lv_obj_set_style_text_font(pp, BADGE_FONT_SMALL, LV_PART_MAIN);
+    lv_obj_set_style_text_color(pp, MOVE_PP_COLOR, LV_PART_MAIN);
+    lv_obj_set_pos(pp, mx + DUEL_MV_PP_GAP, my);
+    move_pp_labels[i] = pp;
   }
   mv_cursor = lv_image_create(scr);
   lv_image_set_src(mv_cursor, &assets_cursor_white_sm);
   lvgl_port_unlock();
 
   redraw_hp();
-  intro_done = true;  // intro runs after sync
+  intro_done = true;  // intro runs after sync; send-out waits for wipe
   show_group(true, false, false);
   log_stream_start("Syncing...", false);
   last_send = 0;
@@ -1063,6 +1663,7 @@ void ui_duel_tick(uint32_t now, const btn_event_t *ev) {
   duel_now = now;
   drain_net();
   hp_num_tick(now);  // count the HP number down/up with the bar
+  sprite_battle_tick(now);
   if (st == DS_SYNC) {
     if (!opp_synced && now - last_send > RESEND_MS) {
       last_send = now;
@@ -1093,19 +1694,30 @@ void ui_duel_tick(uint32_t now, const btn_event_t *ev) {
       bool adv = false;
       switch (strike_phase) {
         case SP_USED:
-          // "<atk> used <move>!" fully streamed: hold 2s, then the
-          // health-bar change takes effect.
-          if (now - stream_done_at >= RECAP_HOLD_MS) {
-            strike_apply();
-            if (strikes[strike_i].eff[0]) {
-              log_stream_start(strikes[strike_i].eff, false);
-              strike_phase = SP_EFF;
-            } else {
-              // Neutral hit: no outcome line, just hold 2s more.
-              neutral_until = now + RECAP_HOLD_MS;
-              strike_phase = SP_NEUTRAL_HOLD;
+          if (!stream_busy()) {
+            if (!strike_lunge_started) {
+              strike_lunge_started = true;
+              strike_t *s = &strikes[strike_i];
+              if (s->atk == opp_idx && s->power > 0) sprite_lunge_foe_start();
+            }
+            if (!strike_damage_applied &&
+                now - stream_done_at >= RECAP_HOLD_MS && !sprite_anim_busy()) {
+              strike_damage_applied = true;
+              strike_apply();
+              if (strikes[strike_i].dmg > 0) {
+                sprite_hurt_start(strikes[strike_i].def);
+                strike_phase = SP_HURT;
+              } else {
+                strike_after_hit();
+              }
             }
           }
+          break;
+        case SP_HURT:
+          if (!sprite_anim_busy()) strike_after_hit();
+          break;
+        case SP_FAINT:
+          if (!sprite_anim_busy()) strike_go_eff();
           break;
         case SP_EFF:
           // Outcome fully streamed: hold 2s, then continue.
@@ -1135,6 +1747,7 @@ void ui_duel_tick(uint32_t now, const btn_event_t *ev) {
           strike_used_text(used, sizeof(used));
           log_stream_start(used, false);
           strike_phase = SP_USED;
+          strike_flow_reset();
         } else {
           strike_finish();
         }
@@ -1170,14 +1783,15 @@ void ui_duel_tick(uint32_t now, const btn_event_t *ev) {
       if (ev->left || ev->right) {
         int col = (move_idx % 2) ^ 1, row = move_idx / 2;
         if (row * 2 + col < count) move_idx = row * 2 + col;
-        redraw_mv_cursor();
+        move_list_redraw();
       }
       if (ev->up || ev->down) {
         int col = move_idx % 2, row = (move_idx / 2) ^ 1;
         if (row * 2 + col < count) move_idx = row * 2 + col;
-        redraw_mv_cursor();
+        move_list_redraw();
       }
       if (ev->a) {
+        if (!move_usable(move_idx)) break;
         // Lock in: send first so a radio failure keeps us choosing
         // (retryable) instead of stranding us in WAIT.
         esp_err_t err = send_move(turn, (uint8_t)move_idx);
@@ -1188,6 +1802,7 @@ void ui_duel_tick(uint32_t now, const btn_event_t *ev) {
           break;
         }
         my_move = move_idx;
+        last_move_idx = move_idx;
         last_send = now;
         st = DS_WAIT;
         show_group(true, false, false);

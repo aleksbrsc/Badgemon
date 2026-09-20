@@ -156,6 +156,22 @@ def main():
         convert('assets_cursor_white', 'cursor-white.png', 12, 26, True),
         convert('assets_cursor_sm', 'cursor-1.png', 8, 17, True),
         convert('assets_cursor_white_sm', 'cursor-white.png', 8, 17, True),
+        convert('assets_vinyl_back_1', 'vinyl_back_1.png', 50, 58, True),
+        convert('assets_vinyl_back_2', 'vinyl_back_2.png', 50, 70, True),
+        convert('assets_vinyl_front_1', 'vinyl_front_1.png', 37, 55, True),
+        convert('assets_vinyl_front_2', 'vinyl_front_2.png', 41, 56, True),
+        convert('assets_pokeball', 'pokeball.png', 27, 27, True),
+        convert('assets_pokeball_open', 'pokeball_open.png', 30, 30, True),
+        convert('assets_pokeball_foe', 'pokeball.png', 20, 20, True),
+        convert('assets_pokeball_open_foe', 'pokeball_open.png', 22, 22, True),
+        convert('assets_ginny_back_1', 'ginny_back_1.png', 50, 65, True),
+        convert('assets_ginny_back_2', 'ginny_back_2.png', 50, 64, True),
+        convert('assets_ginny_front_1', 'ginny_front_1.png', 41, 57, True),
+        convert('assets_ginny_front_2', 'ginny_front_2.png', 41, 57, True),
+        convert('assets_patchy_back_1', 'patchy_back_1.png', 50, 54, True),
+        convert('assets_patchy_back_2', 'patchy_back_2.png', 50, 52, True),
+        convert('assets_patchy_front_1', 'patchy_front_1.png', 41, 44, True),
+        convert('assets_patchy_front_2', 'patchy_front_2.png', 41, 44, True),
     ]
     emit_c(images)
     total = sum(len(b) for _, _, _, _, b in images)
