@@ -1,0 +1,13 @@
+# Badgemon custom partition table (4 MB flash).
+#
+# Matches custom-firmware-hal.md: app at 0x10000 size 0x2A0000, storage
+# after it. Stock singleapp_large only gives factory 1500K, which no
+# longer fits the binary once the LVGL art (assets.c) is linked in.
+#
+# NVS stays at the stock offset so the stored badge name survives the
+# switch to this table.
+# Name,   Type, SubType, Offset,  Size, Flags
+nvs,      data, nvs,     0x9000,  0x6000,
+phy_init, data, phy,     0xf000,  0x1000,
+factory,  app,  factory, 0x10000, 0x2A0000,
+storage,  data, spiffs,  0x2B0000, 0x140000,
