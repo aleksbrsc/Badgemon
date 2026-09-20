@@ -97,7 +97,6 @@ static int prev_move;     // my move on prev_turn (for catch-up resends)
 static int cmd_col, cmd_row;  // command menu cursor (2x2)
 static int move_idx;          // move menu cursor (linear into 2-col grid)
 static uint32_t last_send;
-static int blink_div = 0;
 
 // Caption text streamer + strike-phase turn recap. resolve_turn()
 // queues one strike per attacker; DS_LOG streams "<atk> used <move>!",
@@ -136,9 +135,11 @@ static char post_turn_msg[160];
 
 // ---- LVGL objects ---------------------------------------------------
 static lv_obj_t *foe_name_label;
+static lv_obj_t *foe_level_label;
 static lv_obj_t *foe_hp_label;
 static lv_obj_t *foe_bar;
 static lv_obj_t *me_name_label;
+static lv_obj_t *me_level_label;
 static lv_obj_t *me_hp_label;
 static lv_obj_t *me_bar;
 // Bottom strip groups (toggled per state): log (full caption), command
@@ -201,6 +202,8 @@ static void party_open(void) {
   lv_obj_set_style_text_font(hp_l, BADGE_FONT_SMALL, LV_PART_MAIN);
   lv_obj_set_style_text_color(hp_l, PLATE_INK, LV_PART_MAIN);
   lv_obj_set_pos(hp_l, PARTY2_HP_X, PARTY2_HP_Y);
+  lv_obj_set_width(hp_l, PARTY2_HP_W);
+  lv_obj_set_style_text_align(hp_l, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
   lv_label_set_text(hp_l, hp);
   party_track(hp_l);
   lv_obj_t *bar = lv_bar_create(scr);
@@ -230,13 +233,23 @@ static void party_open(void) {
     lv_obj_set_pos(slot, PARTY2_SLOT_X, PARTY2_SLOT_Y + i * PARTY2_SLOT_PITCH);
     party_track(slot);
   }
+  // Bottom white dialog bar prompt (dark ink) + purple CANCEL tab
+  // (white). No cursor is drawn anywhere on this screen.
   lv_obj_t *hint = lv_label_create(scr);
   lv_obj_set_style_text_font(hint, BADGE_FONT_SMALL, LV_PART_MAIN);
   lv_obj_set_style_text_color(hint, PLATE_INK, LV_PART_MAIN);
   lv_obj_set_pos(hint, PARTY2_DLG_X, PARTY2_DLG_Y);
   lv_obj_set_width(hint, PARTY2_DLG_W);
-  lv_label_set_text(hint, "B: back");
+  lv_label_set_text(hint, "Choose a Badgemon.");
   party_track(hint);
+  lv_obj_t *cancel = lv_label_create(scr);
+  lv_obj_set_style_text_font(cancel, BADGE_FONT_SMALL, LV_PART_MAIN);
+  lv_obj_set_style_text_color(cancel, lv_color_white(), LV_PART_MAIN);
+  lv_obj_set_pos(cancel, PARTY2_CANCEL_X, PARTY2_CANCEL_Y);
+  lv_obj_set_width(cancel, PARTY2_CANCEL_W);
+  lv_obj_set_style_text_align(cancel, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_label_set_text(cancel, "CANCEL");
+  party_track(cancel);
   lvgl_port_unlock();
   st = DS_PARTY;
   ESP_LOGI(TAG, "party open");
@@ -388,28 +401,80 @@ static void bar_set(lv_obj_t *bar, int hp, int max_hp, lv_anim_enable_t anim) {
 // mid-battle animate.
 static bool bars_init;
 
-// "Name Lv.N" plate caption (levels can rise mid-duel on a KO).
-static void set_name_plate(lv_obj_t *label, const pokemon_t *p) {
-  if (!label) return;
-  char buf[32];
-  snprintf(buf, sizeof(buf), "%s Lv.%d", p->name, p->level);
+// My HP number tweens down (or up) in step with the bar fill instead of
+// snapping. HP_NUM_ANIM_MS matches the bar's anim_time (see make_hp_bar).
+#define HP_NUM_ANIM_MS 600
+static int hp_shown;         // number currently on screen
+static int hp_num_from;      // tween start value
+static int hp_num_to;        // tween target value
+static uint32_t hp_num_start;  // tween start time
+
+// LEDs flash the health colour brightly until this time after I take a
+// hit (0 = not flashing).
+static uint32_t dmg_flash_until;
+
+static void set_me_hp_label(int hp, int max_hp) {
+  if (!me_hp_label) return;
+  char buf[24];
+  snprintf(buf, sizeof(buf), "%d/%d", hp, max_hp);
+  if (!lvgl_port_lock(0)) return;
+  lv_label_set_text(me_hp_label, buf);
+  lvgl_port_unlock();
+}
+
+// Advance the my-HP number toward its target each tick (matches bar).
+static void hp_num_tick(uint32_t now) {
+  if (!me_hp_label || hp_shown == hp_num_to) return;
+  uint32_t el = now - hp_num_start;
+  int v;
+  if (el >= HP_NUM_ANIM_MS) {
+    v = hp_num_to;
+  } else {
+    v = hp_num_from + (int)((long)(hp_num_to - hp_num_from) * (long)el /
+                            HP_NUM_ANIM_MS);
+  }
+  if (v != hp_shown) {
+    hp_shown = v;
+    set_me_hp_label(hp_shown, mons[me_idx].max_health);
+  }
+}
+
+static void set_name_only(lv_obj_t *label, const pokemon_t *p) {
+  if (!label || !p) return;
+  lv_label_set_text(label, p->name);
+}
+
+static void set_level_plate(lv_obj_t *label, const pokemon_t *p) {
+  if (!label || !p) return;
+  char buf[16];
+  snprintf(buf, sizeof(buf), "Lv.%d", p->level);
   lv_label_set_text(label, buf);
 }
 
 static void redraw_hp(void) {
   if (!foe_hp_label) return;  // screen not built yet (enter failed to lock)
-  if (!lvgl_port_lock(0)) return;
-  char buf[24];
   pokemon_t *mp = &mons[me_idx];
+  if (!lvgl_port_lock(0)) return;
   // Foe HP numbers stay hidden (bar only); keep the label blank.
   lv_label_set_text(foe_hp_label, "");
-  snprintf(buf, sizeof(buf), "%d/%d", mp->health, mp->max_health);
-  lv_label_set_text(me_hp_label, buf);
-  // Names carry the level; refresh so a mid-duel level-up shows.
-  set_name_plate(foe_name_label, &mons[opp_idx]);
-  set_name_plate(me_name_label, mp);
+  set_name_only(foe_name_label, &mons[opp_idx]);
+  set_level_plate(foe_level_label, &mons[opp_idx]);
+  set_name_only(me_name_label, mp);
+  set_level_plate(me_level_label, mp);
   lvgl_port_unlock();
   lv_anim_enable_t anim = bars_init ? LV_ANIM_ON : LV_ANIM_OFF;
+  // My HP number: snap on the first draw, otherwise tween to the new
+  // value over HP_NUM_ANIM_MS so it counts down with the bar.
+  if (!bars_init) {
+    hp_shown = mp->health;
+    hp_num_from = hp_num_to = mp->health;
+    hp_num_start = duel_now;
+    set_me_hp_label(hp_shown, mp->max_health);
+  } else if (mp->health != hp_num_to) {
+    hp_num_from = hp_shown;
+    hp_num_to = mp->health;
+    hp_num_start = duel_now;
+  }
   bars_init = true;
   bar_set(foe_bar, mons[opp_idx].health, mons[opp_idx].max_health, anim);
   bar_set(me_bar, mp->health, mp->max_health, anim);
@@ -434,6 +499,92 @@ static void show_group(bool log, bool cmd, bool moves) {
   lvgl_port_unlock();
 }
 
+// ---- LEDs -----------------------------------------------------------
+// Map my HP fraction onto the same green/orange/red thresholds the HP
+// bar uses, scaled to a modest LED brightness (AA power).
+static void hp_led_rgb(int hp, int max_hp, uint8_t scale, uint8_t *r,
+                       uint8_t *g, uint8_t *b) {
+  uint32_t hex;
+  if (max_hp <= 0 || hp * 4 < max_hp)
+    hex = 0xD83828;
+  else if (hp * 2 < max_hp)
+    hex = 0xE8A020;
+  else
+    hex = 0x38B838;
+  *r = (uint8_t)(((hex >> 16) & 0xFF) * scale / 255);
+  *g = (uint8_t)(((hex >> 8) & 0xFF) * scale / 255);
+  *b = (uint8_t)((hex & 0xFF) * scale / 255);
+}
+
+// 8-bit color wheel (pos 0..255) at a capped brightness, for the win
+// rainbow chase.
+static void led_wheel(uint8_t pos, uint8_t bright, uint8_t *r, uint8_t *g,
+                      uint8_t *b) {
+  uint8_t rr, gg, bb;
+  if (pos < 85) {
+    rr = pos * 3;
+    gg = 255 - pos * 3;
+    bb = 0;
+  } else if (pos < 170) {
+    pos -= 85;
+    rr = 255 - pos * 3;
+    gg = 0;
+    bb = pos * 3;
+  } else {
+    pos -= 170;
+    rr = 0;
+    gg = pos * 3;
+    bb = 255 - pos * 3;
+  }
+  *r = (uint8_t)(rr * bright / 255);
+  *g = (uint8_t)(gg * bright / 255);
+  *b = (uint8_t)(bb * bright / 255);
+}
+
+// Victory: three evenly-spaced LEDs circulate around the 6-LED ring,
+// each a different rainbow hue, with the whole wheel drifting over time.
+static void win_leds(uint32_t now) {
+  int pos = (int)((now / 120) % HAL_LED_COUNT);
+  uint8_t base = (uint8_t)((now / 12) & 0xFF);
+  for (int i = 0; i < HAL_LED_COUNT; i++) hal_led_set_one(i, 0, 0, 0);
+  for (int k = 0; k < 3; k++) {
+    int idx = (pos + k * 2) % HAL_LED_COUNT;
+    uint8_t r, g, b;
+    led_wheel((uint8_t)(base + k * 85), 70, &r, &g, &b);
+    hal_led_set_one(idx, r, g, b);
+  }
+  hal_led_show();
+}
+
+// Central duel LED policy (called every tick):
+//   over      -> win rainbow chase / steady red on a loss
+//   otherwise -> reflect my HP bar colour, flashing brightly for a
+//                couple seconds right after I take damage (not while
+//                waiting on the opponent's move).
+static void duel_leds_update(uint32_t now) {
+  if (st == DS_OVER) {
+    if (over_won)
+      win_leds(now);
+    else
+      hal_led_set_all(40, 0, 0);
+    return;
+  }
+  uint8_t r, g, b;
+  if (st == DS_WAIT) {
+    hp_led_rgb(mons[me_idx].health, mons[me_idx].max_health, 48, &r, &g, &b);
+    hal_led_set_all(r, g, b);
+    return;
+  }
+  if (now < dmg_flash_until) {
+    bool on = ((now / 120) % 2) == 0;
+    hp_led_rgb(mons[me_idx].health, mons[me_idx].max_health, on ? 150 : 8, &r,
+               &g, &b);
+  } else {
+    hp_led_rgb(mons[me_idx].health, mons[me_idx].max_health, 48, &r, &g, &b);
+  }
+  hal_led_set_all(r, g, b);
+}
+
 // "What will X do?" prompt (also restores it after a stub quip).
 static void command_prompt(void) {
   if (!prompt_label) return;
@@ -448,7 +599,7 @@ static void command_prompt(void) {
 
 static void redraw_cmd_cursor(void) {
   if (!cmd_cursor) return;
-  int x = (cmd_col == 0 ? DUEL_CMD_COL_X0 : DUEL_CMD_COL_X1) - DUEL_CUR_DX;
+  int x = (cmd_col == 0 ? DUEL_CMD_COL_X0 : DUEL_CMD_COL_X1) - DUEL_CMD_CUR_DX;
   int y = (cmd_row == 0 ? DUEL_CMD_ROW_Y0 : DUEL_CMD_ROW_Y1) - DUEL_CUR_DY;
   if (!lvgl_port_lock(0)) return;
   lv_obj_set_pos(cmd_cursor, x, y);
@@ -462,13 +613,13 @@ static void to_command(void) {
   command_prompt();
   show_group(false, true, false);
   redraw_cmd_cursor();
-  hal_led_set_all(0, 0, 12);
+  // LEDs are driven centrally by duel_leds_update() each tick.
 }
 
 static void redraw_mv_cursor(void) {
   if (!mv_cursor) return;
   int col = move_idx % 2, row = move_idx / 2;
-  int x = (col == 0 ? DUEL_MV_COL_X0 : DUEL_MV_COL_X1) - DUEL_CUR_DX;
+  int x = (col == 0 ? DUEL_MV_COL_X0 : DUEL_MV_COL_X1) - DUEL_MV_CUR_DX;
   int y = (row == 0 ? DUEL_MV_ROW_Y0 : DUEL_MV_ROW_Y1) - DUEL_CUR_DY;
   if (!lvgl_port_lock(0)) return;
   lv_obj_set_pos(mv_cursor, x, y);
@@ -616,6 +767,8 @@ static void strike_apply(void) {
   pokemon_t *def = &mons[s->def];
   def->health -= s->dmg;
   if (def->health < 0) def->health = 0;
+  // Flash the LEDs for ~2.5s when my own mon takes damage.
+  if (s->def == me_idx && s->dmg > 0) dmg_flash_until = duel_now + 2500;
   redraw_hp();
 }
 
@@ -714,10 +867,10 @@ static void show_over(void) {
   n_strikes = 0;
   strike_phase = SP_SINGLE;
   char over[64];
-  snprintf(over, sizeof(over), "%s", won ? "YOU WIN!" : "you lose...");
+  snprintf(over, sizeof(over), "%s", won ? "YOU WIN!" : "You lost!");
   show_group(true, false, false);
-  log_stream_start(over, !won);
-  hal_led_set_all(won ? 0 : 40, won ? 40 : 0, 0);
+  log_stream_start(over, false);
+  // Win = rotating rainbow chase, loss = steady red (duel_leds_update).
   ESP_LOGI(TAG, "duel over: %s", won ? "win" : "lose");
 }
 
@@ -784,7 +937,6 @@ void ui_duel_enter(void) {
   cmd_row = 0;
   move_idx = 0;
   last_send = 0;
-  blink_div = 0;
   duel_now = 0;
   stream_full[0] = '\0';
   stream_len = stream_pos = 0;
@@ -795,6 +947,9 @@ void ui_duel_enter(void) {
   over_pending = over_won = false;
   post_turn_msg[0] = '\0';
   bars_init = false;
+  hp_shown = hp_num_from = hp_num_to = 0;
+  hp_num_start = 0;
+  dmg_flash_until = 0;
   intro_top = intro_bot = NULL;
   intro_done = true;
   n_party_objs = 0;
@@ -807,8 +962,8 @@ void ui_duel_enter(void) {
 
   // Drop any stale handles up front: if we fail to build the screen the
   // redraw_* guards must see NULL, not pointers to freed LVGL objects.
-  foe_name_label = foe_hp_label = foe_bar = NULL;
-  me_name_label = me_hp_label = me_bar = NULL;
+  foe_name_label = foe_level_label = foe_hp_label = foe_bar = NULL;
+  me_name_label = me_level_label = me_hp_label = me_bar = NULL;
   cap_full_img = log_label = NULL;
   cap_half_img = prompt_label = NULL;
   speech_img = cmd_cursor = mv_cursor = NULL;
@@ -832,6 +987,10 @@ void ui_duel_enter(void) {
   // Foe HP numbers are hidden (bar only).
   foe_name_label = make_plate_label(scr, DUEL_FOE_NAME_X, DUEL_FOE_NAME_Y);
   lv_label_set_text(foe_name_label, "???");
+  foe_level_label = make_plate_label(scr, DUEL_FOE_LEVEL_X, DUEL_FOE_LEVEL_Y);
+  lv_obj_set_width(foe_level_label, DUEL_FOE_LEVEL_W);
+  lv_obj_set_style_text_align(foe_level_label, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+  lv_label_set_text(foe_level_label, "");
   foe_hp_label = make_plate_label(scr, DUEL_FOE_HP_X, DUEL_FOE_HP_Y);
   lv_label_set_text(foe_hp_label, "");
   lv_obj_add_flag(foe_hp_label, LV_OBJ_FLAG_HIDDEN);
@@ -839,7 +998,11 @@ void ui_duel_enter(void) {
                         DUEL_FOE_BAR_W, DUEL_FOE_BAR_H);
 
   me_name_label = make_plate_label(scr, DUEL_ME_NAME_X, DUEL_ME_NAME_Y);
-  set_name_plate(me_name_label, &mons[me_idx]);
+  set_name_only(me_name_label, &mons[me_idx]);
+  me_level_label = make_plate_label(scr, DUEL_ME_LEVEL_X, DUEL_ME_LEVEL_Y);
+  lv_obj_set_width(me_level_label, DUEL_ME_LEVEL_W);
+  lv_obj_set_style_text_align(me_level_label, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+  set_level_plate(me_level_label, &mons[me_idx]);
   me_hp_label = make_plate_label(scr, DUEL_ME_HP_X, DUEL_ME_HP_Y);
   lv_obj_set_width(me_hp_label, DUEL_ME_HP_W);
   lv_obj_set_style_text_align(me_hp_label, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
@@ -885,7 +1048,7 @@ void ui_duel_enter(void) {
     move_labels[i] = l;
   }
   mv_cursor = lv_image_create(scr);
-  lv_image_set_src(mv_cursor, &assets_cursor_sm);
+  lv_image_set_src(mv_cursor, &assets_cursor_white_sm);
   lvgl_port_unlock();
 
   redraw_hp();
@@ -899,6 +1062,7 @@ void ui_duel_enter(void) {
 void ui_duel_tick(uint32_t now, const btn_event_t *ev) {
   duel_now = now;
   drain_net();
+  hp_num_tick(now);  // count the HP number down/up with the bar
   if (st == DS_SYNC) {
     if (!opp_synced && now - last_send > RESEND_MS) {
       last_send = now;
@@ -906,6 +1070,7 @@ void ui_duel_tick(uint32_t now, const btn_event_t *ev) {
     }
     return;
   }
+  duel_leds_update(now);  // central LED policy (health colour / flashes)
   intro_update(now);
   if (!intro_done) return;  // wipe plays out before any input
 
@@ -1026,7 +1191,7 @@ void ui_duel_tick(uint32_t now, const btn_event_t *ev) {
         last_send = now;
         st = DS_WAIT;
         show_group(true, false, false);
-        status_show("Waiting for foe...", false);
+        status_show("Waiting for your opponent's turn...", false);
         // Opponent may already have sent; resolve next tick via the
         // check at the top.
       }
@@ -1035,13 +1200,7 @@ void ui_duel_tick(uint32_t now, const btn_event_t *ev) {
     }
     case DS_WAIT:
       stream_pump(now);
-      // Amber pulse while waiting (same language as the lobby wait).
-      if (++blink_div >= 5) {
-        blink_div = 0;
-        static bool on = false;
-        on = !on;
-        hal_led_set_all(on ? 24 : 0, on ? 12 : 0, 0);
-      }
+      // LEDs reflect my health colour here (duel_leds_update).
       if (now - last_send > RESEND_MS) {
         last_send = now;
         send_move(turn, (uint8_t)my_move);  // survive dropped packets

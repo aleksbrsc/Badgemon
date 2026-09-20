@@ -14,7 +14,7 @@ static screen_t current = SCR_MENU;
 // Main menu built on the reusable ui_menu: re-opened on every show so
 // the greeting is always fresh. (ping/message screens still exist in
 // the build but are hidden from the menu.)
-static const char *main_items[] = {"play", "edit name"};
+static const char *main_items[] = {"Play", "Set name"};
 
 static void on_name_done(const char *text, void *ctx) {
   (void)ctx;

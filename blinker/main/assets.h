@@ -17,6 +17,7 @@ LV_IMAGE_DECLARE(assets_duel_bg);
 LV_IMAGE_DECLARE(assets_party_bg);
 LV_IMAGE_DECLARE(assets_menu_bg);
 LV_IMAGE_DECLARE(assets_party_screen);
+LV_IMAGE_DECLARE(assets_loading);
 LV_IMAGE_DECLARE(assets_bubble);
 LV_IMAGE_DECLARE(assets_speech_half);
 LV_IMAGE_DECLARE(assets_caption);
@@ -25,6 +26,7 @@ LV_IMAGE_DECLARE(assets_slot);
 LV_IMAGE_DECLARE(assets_cursor);
 LV_IMAGE_DECLARE(assets_cursor_white);
 LV_IMAGE_DECLARE(assets_cursor_sm);
+LV_IMAGE_DECLARE(assets_cursor_white_sm);
 
 // Duel scene (assets_duel_bg): baked plates + dark dialog strip.
 #define DUEL_BG_W 320
@@ -32,6 +34,9 @@ LV_IMAGE_DECLARE(assets_cursor_sm);
 // Enemy (top-left) plate: name + numbers + fill bar over baked HP bar.
 #define DUEL_FOE_NAME_X 26
 #define DUEL_FOE_NAME_Y 27
+#define DUEL_FOE_LEVEL_X 90
+#define DUEL_FOE_LEVEL_Y 27
+#define DUEL_FOE_LEVEL_W 50
 #define DUEL_FOE_HP_X 26
 #define DUEL_FOE_HP_Y 36
 #define DUEL_FOE_BAR_X 69
@@ -42,6 +47,9 @@ LV_IMAGE_DECLARE(assets_cursor_sm);
 // art so the fill reads clearly.
 #define DUEL_ME_NAME_X 192
 #define DUEL_ME_NAME_Y 117
+#define DUEL_ME_LEVEL_X 192
+#define DUEL_ME_LEVEL_Y 117
+#define DUEL_ME_LEVEL_W 98
 #define DUEL_ME_HP_X 192
 #define DUEL_ME_HP_Y 144
 #define DUEL_ME_HP_W 98
@@ -71,16 +79,19 @@ LV_IMAGE_DECLARE(assets_cursor_sm);
 // clears the speech bubble's left edge.
 #define DUEL_CMD_COL_X0 198
 #define DUEL_CMD_COL_X1 278
-#define DUEL_CMD_ROW_Y0 183
-#define DUEL_CMD_ROW_Y1 207
+#define DUEL_CMD_ROW_Y0 189
+#define DUEL_CMD_ROW_Y1 213
 // Move list (inside the full caption): 2 cols x 2 rows, nudged toward
 // the centre so the cursor stays on-screen on the left column.
 #define DUEL_MV_COL_X0 36
 #define DUEL_MV_COL_X1 164
-#define DUEL_MV_ROW_Y0 183
-#define DUEL_MV_ROW_Y1 207
-// Small cursor sits left of the active text: x - 10, y - 4.
-#define DUEL_CUR_DX 10
+// Move grid: slightly below command rows but not as low as the first
+// nudge (between the old 183 and 189 positions).
+#define DUEL_MV_ROW_Y0 186
+#define DUEL_MV_ROW_Y1 210
+// Cursor sits left of the active text; command menu uses a tighter gap.
+#define DUEL_CMD_CUR_DX 10
+#define DUEL_MV_CUR_DX 18
 #define DUEL_CUR_DY 4
 
 // Party screens (assets_party_bg): baked YOU plate + bottom dialog bar.
@@ -122,23 +133,30 @@ LV_IMAGE_DECLARE(assets_cursor_sm);
 #define MENU_BTNS_Y 106
 #define MENU_BTN_H 34
 
-// Party screen on assets_party_screen: current mon in the top-left
-// panel (name + numbers overlaid, fill bar over the baked trough),
-// extra mons as slot rows starting at (138, 8), dialog bottom.
-#define PARTY2_NAME_X 38
-#define PARTY2_NAME_Y 12
-#define PARTY2_HP_X 38
-#define PARTY2_HP_Y 36
-#define PARTY2_BAR_X 32
-#define PARTY2_BAR_Y 64
-#define PARTY2_BAR_W 110
-#define PARTY2_BAR_H 8
+// Party screen on assets_party_screen (updated art): current mon in
+// the top-left light-blue panel (name above, fill bar + number over the
+// baked HP trough), a bottom white dialog bar for the prompt, and a
+// purple CANCEL tab bottom-right. Coords measured from party-screen.png.
+#define PARTY2_NAME_X 52
+#define PARTY2_NAME_Y 34
+#define PARTY2_HP_X 70
+#define PARTY2_HP_Y 62
+#define PARTY2_HP_W 58
+#define PARTY2_BAR_X 69
+#define PARTY2_BAR_Y 55
+#define PARTY2_BAR_W 58
+#define PARTY2_BAR_H 4
 #define PARTY2_SLOT_X 138
 #define PARTY2_SLOT_Y 8
 #define PARTY2_SLOT_PITCH 40
-#define PARTY2_DLG_X 14
-#define PARTY2_DLG_Y 202
-#define PARTY2_DLG_W 216
+// Bottom white dialog bar prompt ("Choose a Badgemon.").
+#define PARTY2_DLG_X 16
+#define PARTY2_DLG_Y 212
+#define PARTY2_DLG_W 232
+// Purple CANCEL tab (white text, centered in the purple rect).
+#define PARTY2_CANCEL_X 261
+#define PARTY2_CANCEL_Y 212
+#define PARTY2_CANCEL_W 50
 
 // Battle intro wipe: two full-width black bars, 120px tall each.
 #define INTRO_BAR_H 120

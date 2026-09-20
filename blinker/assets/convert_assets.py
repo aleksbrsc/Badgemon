@@ -146,6 +146,7 @@ def main():
         convert('assets_party_bg', 'party-background.png', 320, 240, False),
         convert('assets_menu_bg', 'main-menu.png', 320, 240, False),
         convert('assets_party_screen', 'party-screen.png', 320, 240, False),
+        convert('assets_loading', 'loading-splash.png', 320, 240, False),
         convert('assets_bubble', 'speech-bubble-1.png', 292, 129, True),
         convert('assets_speech_half', 'speech-bubble-1.png', 146, 64, True),
         convert('assets_caption', 'caption-bubble-1.png', 316, 64, True),
@@ -154,6 +155,7 @@ def main():
         convert('assets_cursor', 'cursor-1.png', 12, 26, True),
         convert('assets_cursor_white', 'cursor-white.png', 12, 26, True),
         convert('assets_cursor_sm', 'cursor-1.png', 8, 17, True),
+        convert('assets_cursor_white_sm', 'cursor-white.png', 8, 17, True),
     ]
     emit_c(images)
     total = sum(len(b) for _, _, _, _, b in images)

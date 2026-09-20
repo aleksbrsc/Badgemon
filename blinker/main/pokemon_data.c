@@ -2,7 +2,7 @@
 #include "esp_random.h"
 
 static const pokemon_t SPECIES[SPECIES_COUNT] = {
-    {.name = "Charmander",
+    {.name = "Vinyl",
      .growth = GROWTH_MEDIUM_SLOW,
      .base_hp = 39,
      .base_attack = 52,
@@ -17,7 +17,7 @@ static const pokemon_t SPECIES[SPECIES_COUNT] = {
          {"Slash", TYPE_NORMAL, 70, 20},
          {"Metal Claw", TYPE_STEEL, 50, 35},
      }},
-    {.name = "Bulbasaur",
+    {.name = "Patch",
      .growth = GROWTH_MEDIUM_SLOW,
      .base_hp = 45,
      .base_attack = 49,
@@ -32,7 +32,7 @@ static const pokemon_t SPECIES[SPECIES_COUNT] = {
          {"Razor Leaf", TYPE_GRASS, 55, 25},
          {"Sludge Bomb", TYPE_POISON, 65, 20},
      }},
-    {.name = "Squirtle",
+    {.name = "Ginny",
      .growth = GROWTH_MEDIUM_SLOW,
      .base_hp = 44,
      .base_attack = 48,

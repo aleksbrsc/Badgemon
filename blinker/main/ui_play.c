@@ -54,6 +54,7 @@ static void status_show(const char *s, bool is_err) {
   ESP_LOGI(TAG, "status: %s", s);
   if (!lvgl_port_lock(0)) return;
   lv_label_set_text(status_label, s);
+  lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_style_text_color(status_label,
                               is_err ? lv_color_hex(0xFF7070) : lv_color_white(),
                               LV_PART_MAIN);
@@ -75,6 +76,7 @@ static void you_refresh(void) {
   char t[32];
   snprintf(t, sizeof(t), "username: %s", me);
   lv_label_set_text(you_name_label, t);
+  lv_obj_set_style_text_align(you_name_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lvgl_port_unlock();
 }
 
@@ -87,6 +89,16 @@ static void waiting_show(uint32_t now) {
   snprintf(t, sizeof(t), "Waiting%.*s", dots, "...");
   if (!lvgl_port_lock(0)) return;
   lv_label_set_text(status_label, t);
+  lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_set_style_text_color(status_label, lv_color_white(), LV_PART_MAIN);
+  lvgl_port_unlock();
+}
+
+static void trainer_spotted_show(void) {
+  if (!status_label) return;
+  if (!lvgl_port_lock(0)) return;
+  lv_label_set_text(status_label, "TRAINER SPOTTED!");
+  lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_style_text_color(status_label, lv_color_white(), LV_PART_MAIN);
   lvgl_port_unlock();
 }
@@ -152,8 +164,9 @@ void ui_play_enter(void) {
   you_name_label = lv_label_create(scr);
   lv_obj_set_style_text_font(you_name_label, BADGE_FONT_SMALL, LV_PART_MAIN);
   lv_obj_set_style_text_color(you_name_label, lv_color_white(), LV_PART_MAIN);
-  lv_obj_set_pos(you_name_label, PARTY_YOU_NAME_X, PARTY_YOU_NAME_Y);
-  lv_obj_set_width(you_name_label, 280);
+  lv_obj_set_pos(you_name_label, 0, PARTY_YOU_NAME_Y);
+  lv_obj_set_width(you_name_label, 320);
+  lv_obj_set_style_text_align(you_name_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
 
   for (int v = 0; v < PLAY_ROWS_SHOWN; v++) {
     int y = PLAY_ROWS_Y + v * PLAY_ROW_PITCH;
@@ -179,8 +192,9 @@ void ui_play_enter(void) {
   status_label = lv_label_create(scr);
   lv_obj_set_style_text_font(status_label, BADGE_FONT_SMALL, LV_PART_MAIN);
   lv_obj_set_style_text_color(status_label, lv_color_white(), LV_PART_MAIN);
-  lv_obj_set_pos(status_label, PARTY_DLG_X, PARTY_DLG_Y);
-  lv_obj_set_width(status_label, PARTY_DLG_W);
+  lv_obj_set_pos(status_label, 0, PARTY_DLG_Y);
+  lv_obj_set_width(status_label, 320);
+  lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_label_set_long_mode(status_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
   lvgl_port_unlock();
   show_browse();
@@ -274,12 +288,16 @@ void ui_play_tick(uint32_t now_ms, const btn_event_t *ev) {
         int n = lobby_list(peers, LOBBY_MAX_PEERS);
         if (n != n_peers) {
           ESP_LOGD(TAG, "peer count %d -> %d", n_peers, n);
+          if (n > n_peers) trainer_spotted_show();
           n_peers = n;
           if (cursor >= n_peers) cursor = n_peers > 0 ? n_peers - 1 : 0;
           list_redraw();
         }
       }
-      waiting_show(now_ms);
+      if (n_peers > 0)
+        trainer_spotted_show();
+      else
+        waiting_show(now_ms);
       if (++blink_div >= 25) {
         blink_div = 0;
         hal_led_set_all(0, 0, 8);
@@ -287,13 +305,6 @@ void ui_play_tick(uint32_t now_ms, const btn_event_t *ev) {
       break;
     }
     case ST_WAIT:
-      // Amber pulse while waiting.
-      if (++blink_div >= 5) {
-        blink_div = 0;
-        static bool on = false;
-        on = !on;
-        hal_led_set_all(on ? 24 : 0, on ? 12 : 0, 0);
-      }
       if (now_ms - wait_since > WAIT_TIMEOUT_MS) {
         to_result("%s: no answer", wait_name, true);
         hal_led_set_all(24, 0, 0);
