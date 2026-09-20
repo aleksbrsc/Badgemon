@@ -170,7 +170,7 @@ static int cmd_ping(int argc, char **argv) {
   }
   uint8_t buf[32];
   uint32_t seq = 0;
-  esp_err_t err = net_send(vals, len, &seq);
+  esp_err_t err = net_send(PKT_PING, vals, len, &seq);
   printf("ping #%u %s\n", (unsigned)seq, esp_err_to_name(err));
   return 0;
 }

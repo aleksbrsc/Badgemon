@@ -7,19 +7,35 @@ no network (WiFi STA, channel 1, broadcast MAC).
 ## Screens
 
 Navigation rule: **Home is always back** (menu is the root).
-- **Menu** (`Up/Down` move, `A` open): `ping`, `settings`. Greets you
-  by name once set.
-- **Ping**: 4-slot digit composer (`Up/Down` digit, `Left/Right`
-  cursor, `A` send, `B` clear, `START` demo `1 3 3 7`), last received
-  `rx MAC: values`, green burst on receive. `Home` back to menu.
+- **Menu** (`Up/Down` move, `A` open): `play`, `settings`. Greets you
+  by name once set. (Raw `ping`/`message` screens still exist in the
+  build but are hidden from the menu.)
+- **Play (lobby)**:
+  1. Opens with an auto-scan; `A` on `refresh` re-broadcasts DISCOVER.
+     Every badge auto-replies with its name (settings name or MAC
+     tail), so nearby players accumulate in the list (15 s expiry).
+  2. Move to a name, `A` challenges — a broadcast only that MAC acts
+     on. Waiter shows amber pulse, 10 s timeout.
+  3. Receiver pops `X wants to play! A = yes, B = no` (green flash).
+     Answer routes back; challenger sees `game on vs X!` / `X declined`.
+     `Home` in a dialog/wait declines/cancels.
 - **Settings**: view name, `edit name` (keyboard), `clear name`.
-- **Keyboard** (reusable, `ui_keyboard.h`): full-width grid, cursor
-  red; `A` pick, `B` delete, `START` save, `Home` cancel. Name persists
-  in NVS (`badge` namespace) across reboots and reflashes.
+- **Keyboard** (reusable, `ui_keyboard.h`): full-width 7-column grid
+  at font 24 — a-z, 0-9, `._-+`, plus `aA` (one-shot caps toggle) and
+  `sp` (space). `A` pick, `B` delete, `START` save, `Home` cancel.
+  Shift state shows as `^` after the text. Two modes: `ui_keyboard_start`
+  (own screen, e.g. settings) or `ui_keyboard_bind` (embed into your
+  labels, e.g. message). Name persists in NVS (`badge` namespace)
+  across reboots and reflashes.
 
 ## Payload wire format (`main/payload.h`)
 
-`mac[6] | seq u32 LE | len u8 | vals[len]`, max 8 values (19 bytes).
+`mac[6] | seq u32 LE | type u8 | len u8 | vals[len]`, max 32 values
+(44 bytes). Types: ping digits/ASCII, discover, presence (name),
+challenge (target MAC + name), response (target MAC + accept + name).
+Receivers show text when all bytes are printable, numbers otherwise.
+Reflash ALL badges together — the header grew by one byte, old
+firmware drops new packets (and vice versa).
 `ping_pack` / `ping_unpack` do the marshalling; malformed packets are
 dropped in the RX callback with a debug log.
 
@@ -32,6 +48,8 @@ dropped in the RX callback with a debug log.
 | `hal_display.h/.c` | SPI + ST7789 + LVGL init, screen reset |
 | `hal_i2c.h/.c` | shared I2C bus (accel + NFC) |
 | `net.h/.c` | WiFi STA + ESP-NOW, MAC, send, RX queue |
+| `lobby.h/.c` | discovery, peer list, challenge/response routing |
+| `ui_play.h/.c` | lobby browser + challenge dialog |
 | `store.h/.c` | NVS persistence (`badge` namespace) |
 | `nav.h/.c` | screen switching (menu/ping/settings) |
 | `ui_menu.h/.c` | reusable menu (title, subtitle, items, pick/back cbs) |

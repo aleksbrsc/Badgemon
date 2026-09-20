@@ -1,6 +1,6 @@
 #include "nav.h"
 #include "ui_menu.h"
-#include "ui_ping.h"
+#include "ui_play.h"
 #include "ui_settings.h"
 #include "ui_keyboard.h"
 #include "store.h"
@@ -11,12 +11,13 @@ static const char *TAG = "nav";
 static screen_t current = SCR_MENU;
 
 // Main menu built on the reusable ui_menu: re-opened on every show so
-// the greeting is always fresh.
-static const char *main_items[] = {"ping", "settings"};
+// the greeting is always fresh. (ping/message screens still exist in
+// the build but are hidden from the menu.)
+static const char *main_items[] = {"play", "settings"};
 
 static void on_main_pick(int index, void *ctx) {
   (void)ctx;
-  nav_show(index == 0 ? SCR_PING : SCR_SETTINGS);
+  nav_show(index == 0 ? SCR_PLAY : SCR_SETTINGS);
 }
 
 static void menu_enter_main(void) {
@@ -27,7 +28,7 @@ static void menu_enter_main(void) {
     snprintf(greet, sizeof(greet), "hi %s", name);
   else
     snprintf(greet, sizeof(greet), "set name in settings");
-  ui_menu_open("badge", greet, main_items, 2, on_main_pick, NULL, NULL);
+  ui_menu_open("badge", greet, main_items, 3, on_main_pick, NULL, NULL);
 }
 
 void nav_show(screen_t s) {
@@ -35,7 +36,8 @@ void nav_show(screen_t s) {
   current = s;
   switch (s) {
     case SCR_MENU: menu_enter_main(); break;
-    case SCR_PING: ui_ping_enter(); break;
+    case SCR_PLAY: ui_play_enter(); break;
+    case SCR_MSG: break;  // hidden (kept in build)
     case SCR_SETTINGS: ui_settings_enter(); break;
   }
 }
@@ -45,10 +47,12 @@ void nav_tick(uint32_t now_ms, const btn_event_t *ev) {
     case SCR_MENU:
       ui_menu_tick(now_ms, ev);
       break;
-    case SCR_PING:
-      ui_ping_tick(now_ms, ev);
-      if (ev->home) nav_show(SCR_MENU);  // Back is always Home
+    case SCR_PLAY:
+      ui_play_tick(now_ms, ev);
+      if (ev->home && !ui_play_home(ev)) nav_show(SCR_MENU);
       break;
+    case SCR_MSG:
+      break;  // hidden
     case SCR_SETTINGS: {
       // Keyboard owns Home while active (cancel) — don't also go back.
       bool kb = ui_keyboard_active();

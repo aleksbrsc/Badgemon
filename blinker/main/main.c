@@ -20,13 +20,30 @@
 #include "nav.h"
 #include "debug.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 static const char *TAG = "main";
 
+static const char *reset_name(esp_reset_reason_t r) {
+  switch (r) {
+    case ESP_RST_POWERON: return "POWERON";
+    case ESP_RST_EXT: return "EXT";
+    case ESP_RST_SW: return "SW";
+    case ESP_RST_PANIC: return "PANIC";
+    case ESP_RST_INT_WDT: return "INT_WDT";
+    case ESP_RST_TASK_WDT: return "TASK_WDT";
+    case ESP_RST_WDT: return "WDT";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+    case ESP_RST_BROWNOUT: return "BROWNOUT";
+    case ESP_RST_SDIO: return "SDIO";
+    default: return "?";
+  }
+}
+
 void app_main(void) {
-  ESP_LOGI(TAG, "ping badge booting");
+  ESP_LOGI(TAG, "ping badge booting (reset=%s)", reset_name(esp_reset_reason()));
   hal_buttons_init();
   hal_led_init();
   hal_display_init();

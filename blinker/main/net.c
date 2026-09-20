@@ -38,6 +38,9 @@ void net_init(void) {
   ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
   ESP_ERROR_CHECK(esp_wifi_start());
+  // Cap TX power: full 20 dBm bursts droop AA/boost rails and brownout
+  // the board. 15 dBm is plenty for same-room badge chat.
+  ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(60));
   ESP_ERROR_CHECK(esp_wifi_set_channel(PING_CHANNEL, WIFI_SECOND_CHAN_NONE));
   ESP_ERROR_CHECK(esp_read_mac(my_mac, ESP_MAC_WIFI_STA));
   ESP_ERROR_CHECK(esp_now_init());
@@ -51,13 +54,13 @@ void net_init(void) {
 
 const uint8_t *net_mac(void) { return my_mac; }
 
-esp_err_t net_send(const uint8_t *vals, uint8_t len, uint32_t *seq_out) {
-  uint8_t buf[32];
+esp_err_t net_send(uint8_t type, const uint8_t *vals, uint8_t len, uint32_t *seq_out) {
+  uint8_t buf[64];
   uint32_t s = ++seq;
-  int n = ping_pack(buf, my_mac, s, vals, len);
+  int n = ping_pack(buf, my_mac, s, type, vals, len);
   if (n == 0) return ESP_ERR_INVALID_ARG;
   esp_err_t err = esp_now_send(BROADCAST, buf, n);
-  ESP_LOGI(TAG, "sent #%u (%s)", (unsigned)s, esp_err_to_name(err));
+  ESP_LOGI(TAG, "sent #%u type=%d (%s)", (unsigned)s, type, esp_err_to_name(err));
   if (seq_out) *seq_out = s;
   return err;
 }

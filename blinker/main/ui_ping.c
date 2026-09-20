@@ -4,6 +4,7 @@
 #include "hal_buttons.h"
 #include "net.h"
 #include "store.h"
+#include "ui_msg.h"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
 #include <stdio.h>
@@ -120,10 +121,10 @@ void ui_ping_tick(uint32_t now_ms, const btn_event_t *ev) {
     tx_redraw();
     event_show("demo loaded, A to send");
   }
-  if (ev->a && now_ms - last_tx_ms > 300) {
+  if (ev->a && now_ms - last_tx_ms > 500) {
     last_tx_ms = now_ms;
     uint32_t seq = 0;
-    if (net_send(tx, TX_SLOTS, &seq) == ESP_OK) {
+    if (net_send(PKT_PING, tx, TX_SLOTS, &seq) == ESP_OK) {
       char msg[48];
       snprintf(msg, sizeof(msg), "sent #%u", (unsigned)seq);
       event_show(msg);
@@ -138,10 +139,10 @@ void ui_ping_tick(uint32_t now_ms, const btn_event_t *ev) {
              rx.len);
     if (lvgl_port_lock(0)) {
       char buf[64];
-      int n = snprintf(buf, sizeof(buf), "rx %02X:%02X:", rx.mac[4], rx.mac[5]);
-      for (int i = 0; i < rx.len && n < (int)sizeof(buf) - 4; i++)
-        n += snprintf(buf + n, sizeof(buf) - n, " %d", rx.vals[i]);
-      lv_label_set_text(rx_label, buf);
+      char line[72];
+      msg_format_vals(buf, sizeof(buf), rx.mac, rx.vals, rx.len);
+      snprintf(line, sizeof(line), "rx %s", buf);
+      lv_label_set_text(rx_label, line);
       char ev2[40];
       snprintf(ev2, sizeof(ev2), "rx #%u from %02X:%02X", (unsigned)rx.seq, rx.mac[4],
                rx.mac[5]);
