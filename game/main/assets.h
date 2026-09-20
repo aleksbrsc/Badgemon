@@ -1,5 +1,5 @@
-// Badge art: pixel-art PNGs from blinker/assets, converted to LVGL v9 C
-// arrays by blinker/assets/convert_assets.py (nearest-neighbor, crisp).
+// Badge art: pixel-art PNGs from game/assets, converted to LVGL v9 C
+// arrays by game/assets/convert_assets.py (nearest-neighbor, crisp).
 //   duel_bg   320x240 RGB565    battle scene (baked HP plates + dialog strip)
 //   party_bg  320x240 RGB565    teal stripes (baked YOU plate + dialog bar)
 //   bubble    292x129 RGB565A8  dialog frame
