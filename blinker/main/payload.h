@@ -8,7 +8,9 @@
 // nearby badges to announce; PRESENCE carries a display name;
 // CHALLENGE carries target_mac[6] + challenger name; RESP carries
 // target_mac[6] + accept u8 + responder name; DUEL carries target_mac[6]
-// + turn u8 + move_idx u8 (deterministic lockstep, see ui_duel.c).
+// + turn u8 + move_idx u8 (deterministic lockstep, see ui_duel.c);
+// DUEL_SETUP carries target_mac[6] + mon snapshot[8] (species, level,
+// exp u32 LE, health u16 LE) before the first turn.
 // Broadcast medium — "addressing" is by MAC inside the packet; everyone hears everything.
 #pragma once
 
@@ -26,7 +28,11 @@ typedef enum {
   PKT_CHALLENGE = 3, // vals: target_mac[6] + challenger name
   PKT_RESP = 4,      // vals: target_mac[6] + accept u8 + responder name
   PKT_DUEL = 5,      // vals: target_mac[6] + turn u8 + move_idx u8
+  PKT_DUEL_SETUP = 6,  // vals: target_mac[6] + setup snapshot[8]
 } pkt_type_t;
+
+#define DUEL_SETUP_SNAP_LEN 8
+#define DUEL_SETUP_VALS_LEN (6 + DUEL_SETUP_SNAP_LEN)
 
 typedef struct {
   uint8_t mac[6];

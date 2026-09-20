@@ -15,6 +15,8 @@
 #include "nav.h"
 #include "net.h"
 #include "payload.h"
+#include "engine.h"
+#include "pokemon_data.h"
 #include "store.h"
 #include "ui_keyboard.h"
 #include "ui_menu.h"
@@ -528,6 +530,24 @@ static void test_keyboard(void) {
   t_tick(&EV_NONE);
 }
 
+static void inject_duel_setup_from_tester(void) {
+  ping_msg_t m;
+  memset(&m, 0, sizeof(m));
+  m.mac[5] = 0x42;
+  m.type = PKT_DUEL_SETUP;
+  m.len = DUEL_SETUP_VALS_LEN;
+  memcpy(m.vals, net_mac(), 6);
+  pokemon_t opp;
+  pokemon_from_species(&opp, SPECIES_BULBASAUR);
+  pokemon_init(&opp, GAME_START_LEVEL);
+  m.vals[6] = SPECIES_BULBASAUR;
+  m.vals[7] = (uint8_t)opp.level;
+  memcpy(m.vals + 8, &opp.exp, 4);
+  uint16_t hp = (uint16_t)opp.health;
+  memcpy(m.vals + 12, &hp, 2);
+  net_inject(&m);
+}
+
 static void test_play_dialog(void) {
   printf("-- play dialog --\n");
   nav_show(SCR_PLAY);
@@ -549,6 +569,9 @@ static void test_play_dialog(void) {
   if (nav_current() == SCR_DUEL) {
     t_check("A accepts to duel", true);
     t_check("duel vs tester", snap_has_duel("tester"));
+    t_check("duel waits on sync", snap_has_duel("st=sync"));
+    inject_duel_setup_from_tester();
+    t_tick(&EV_NONE);
     t_check("duel opens on command", snap_has_duel("st=command"));
     t_tap(true, false, false, false, false, false, false);  // A on FIGHT
     t_check("FIGHT opens moves", snap_has_duel("st=moves"));

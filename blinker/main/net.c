@@ -115,3 +115,8 @@ void net_snoop(bool on) {
 bool net_snooping(void) { return snoop; }
 
 bool net_recv(ping_msg_t *msg) { return xQueueReceive(rx_queue, msg, 0) == pdTRUE; }
+
+bool net_inject(const ping_msg_t *msg) {
+  if (!msg || !rx_queue) return false;
+  return xQueueSend(rx_queue, msg, 0) == pdTRUE;
+}

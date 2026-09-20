@@ -17,6 +17,7 @@
 #include "hal_i2c.h"
 #include "net.h"
 #include "store.h"
+#include "game.h"
 #include "nav.h"
 #include "debug.h"
 #include "fault.h"
@@ -54,6 +55,7 @@ void app_main(void) {
   hal_i2c_init();
   net_init();
   store_init();  // NVS ready (nvs_flash_init ran in net_init)
+  game_init();
   store_note_boot(reason);  // boot forensics for `boot` cmd (brownout vs nav bug)
   debug_init();  // serial REPL over USB-Serial-JTAG
   nav_show(SCR_MENU);

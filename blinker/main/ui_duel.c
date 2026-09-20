@@ -23,6 +23,8 @@
 // outcome ("It's super effective!" / "<mon> has fainted!" / ...).
 #include "ui_duel.h"
 #include "engine.h"
+#include "game.h"
+#include "pokemon_data.h"
 #include "net.h"
 #include "lobby.h"  // LOBBY_NAME_MAX
 #include "payload.h"
@@ -66,30 +68,15 @@ static const char *CMD_OPTS[2][2] = {
     {"BAG", "RUN"},
 };
 
-typedef enum { DS_LOG, DS_COMMAND, DS_SELECT, DS_WAIT, DS_OVER, DS_PARTY } duel_state_t;
-
-// ---- Tiny hardcoded dex (spike). p0 = DEX[0], p1 = DEX[1]. ----------
-// Fire vs Grass/Poison gives clear type-chart behaviour on screen:
-// Charmander's Ember is 2x on Bulbasaur; Bulbasaur's Grass moves are
-// 0.5x back into Charmander.
-static const pokemon_t DEX[2] = {
-    {.name = "Charmander", .health = 150, .max_health = 150,
-     .type1 = TYPE_FIRE, .type2 = TYPE_NONE, .move_count = 4,
-     .moves = {
-         {"Ember", TYPE_FIRE, 40, 25},
-         {"Scratch", TYPE_NORMAL, 40, 35},
-         {"Slash", TYPE_NORMAL, 70, 20},
-         {"Metal Claw", TYPE_STEEL, 50, 35},
-     }},
-    {.name = "Bulbasaur", .health = 150, .max_health = 150,
-     .type1 = TYPE_GRASS, .type2 = TYPE_POISON, .move_count = 4,
-     .moves = {
-         {"Vine Whip", TYPE_GRASS, 45, 25},
-         {"Tackle", TYPE_NORMAL, 40, 35},
-         {"Razor Leaf", TYPE_GRASS, 55, 25},
-         {"Sludge Bomb", TYPE_POISON, 65, 20},
-     }},
-};
+typedef enum {
+  DS_SYNC,
+  DS_LOG,
+  DS_COMMAND,
+  DS_SELECT,
+  DS_WAIT,
+  DS_OVER,
+  DS_PARTY
+} duel_state_t;
 
 // ---- Battle state ---------------------------------------------------
 static uint8_t opp_mac[6];
@@ -98,6 +85,8 @@ static char opp_name[LOBBY_NAME_MAX + 1];
 static pokemon_t mons[2];  // mons[0] = player 0, mons[1] = player 1
 static bool me_is_p0;
 static int me_idx, opp_idx;
+static species_id_t my_species;
+static bool opp_synced;
 
 static duel_state_t st;
 static uint8_t turn;      // current turn number (wraps at 256; fine)
@@ -129,12 +118,21 @@ typedef struct {
 static strike_t strikes[2];
 static int n_strikes, strike_i;
 // Subphase: USED streams, USED_HOLD waits 2s, EFF streams the outcome,
-// EFF_HOLD waits 2s, NEUTRAL_HOLD waits 2s with no line, SINGLE is a
-// one-off line (errors) that falls back to the command menu.
-typedef enum { SP_USED, SP_EFF, SP_NEUTRAL_HOLD, SP_SINGLE } strike_phase_t;
+// EFF_HOLD waits 2s, NEUTRAL_HOLD waits 2s with no line, POST_TURN is
+// optional "grew to Lv.N!" after the last strike, SINGLE is a one-off
+// line (errors) that falls back to the command menu.
+typedef enum {
+  SP_USED,
+  SP_EFF,
+  SP_NEUTRAL_HOLD,
+  SP_POST_TURN,
+  SP_SINGLE
+} strike_phase_t;
 static strike_phase_t strike_phase;
 static uint32_t neutral_until;
 static bool over_pending, over_won;
+// FireRed-style level-up line after the KO (exp applied in resolve_turn).
+static char post_turn_msg[160];
 
 // ---- LVGL objects ---------------------------------------------------
 static lv_obj_t *foe_name_label;
@@ -390,6 +388,14 @@ static void bar_set(lv_obj_t *bar, int hp, int max_hp, lv_anim_enable_t anim) {
 // mid-battle animate.
 static bool bars_init;
 
+// "Name Lv.N" plate caption (levels can rise mid-duel on a KO).
+static void set_name_plate(lv_obj_t *label, const pokemon_t *p) {
+  if (!label) return;
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%s Lv.%d", p->name, p->level);
+  lv_label_set_text(label, buf);
+}
+
 static void redraw_hp(void) {
   if (!foe_hp_label) return;  // screen not built yet (enter failed to lock)
   if (!lvgl_port_lock(0)) return;
@@ -399,6 +405,9 @@ static void redraw_hp(void) {
   lv_label_set_text(foe_hp_label, "");
   snprintf(buf, sizeof(buf), "%d/%d", mp->health, mp->max_health);
   lv_label_set_text(me_hp_label, buf);
+  // Names carry the level; refresh so a mid-duel level-up shows.
+  set_name_plate(foe_name_label, &mons[opp_idx]);
+  set_name_plate(me_name_label, mp);
   lvgl_port_unlock();
   lv_anim_enable_t anim = bars_init ? LV_ANIM_ON : LV_ANIM_OFF;
   bars_init = true;
@@ -486,6 +495,51 @@ static void to_moves(void) {
 }
 
 // ---- Networking -----------------------------------------------------
+static void pack_setup_snap(const pokemon_t *p, species_id_t sp, uint8_t *snap) {
+  snap[0] = (uint8_t)sp;
+  snap[1] = (uint8_t)p->level;
+  memcpy(snap + 2, &p->exp, 4);
+  uint16_t hp = (uint16_t)p->health;
+  memcpy(snap + 6, &hp, 2);
+}
+
+static bool apply_opp_setup(const uint8_t *snap) {
+  if (!species_id_valid(snap[0])) return false;
+  species_id_t sp = (species_id_t)snap[0];
+  int level = snap[1];
+  uint32_t exp;
+  uint16_t hp;
+  memcpy(&exp, snap + 2, 4);
+  memcpy(&hp, snap + 6, 2);
+  pokemon_from_species(&mons[opp_idx], sp);
+  pokemon_apply_progress(&mons[opp_idx], level, (int)exp, (int)hp);
+  return mons[opp_idx].move_count > 0;
+}
+
+static esp_err_t send_setup(void) {
+  uint8_t buf[DUEL_SETUP_VALS_LEN];
+  memcpy(buf, opp_mac, 6);
+  pack_setup_snap(&mons[me_idx], my_species, buf + 6);
+  esp_err_t err = net_send(PKT_DUEL_SETUP, buf, sizeof(buf), NULL);
+  if (err != ESP_OK)
+    ESP_LOGW(TAG, "send setup failed: %s", esp_err_to_name(err));
+  return err;
+}
+
+static void duel_sync_done(void) {
+  opp_synced = true;
+  st = DS_COMMAND;
+  redraw_hp();
+  to_command();
+  intro_start_bars();
+  ESP_LOGI(TAG, "sync done — your move");
+}
+
+static void duel_save_and_exit(void) {
+  game_commit_active(&mons[me_idx]);
+  nav_show(SCR_PLAY);
+}
+
 static esp_err_t send_move(uint8_t t, uint8_t mv) {
   uint8_t buf[8];
   memcpy(buf, opp_mac, 6);
@@ -500,9 +554,14 @@ static esp_err_t send_move(uint8_t t, uint8_t mv) {
 static void drain_net(void) {
   ping_msg_t m;
   while (net_recv(&m)) {
-    if (m.type != PKT_DUEL || m.len < 8) continue;  // ignore lobby chatter
-    if (!for_me(m.vals)) continue;                  // not addressed to me
-    if (memcmp(m.mac, opp_mac, 6)) continue;        // not my opponent
+    if (!for_me(m.vals)) continue;
+    if (memcmp(m.mac, opp_mac, 6)) continue;
+    if (m.type == PKT_DUEL_SETUP && m.len >= DUEL_SETUP_VALS_LEN &&
+        st == DS_SYNC && !opp_synced) {
+      if (apply_opp_setup(m.vals + 6)) duel_sync_done();
+      continue;
+    }
+    if (m.type != PKT_DUEL || m.len < 8) continue;
     uint8_t t = m.vals[6], mv = m.vals[7];
     if (mv >= mons[opp_idx].move_count) {
       ESP_LOGW(TAG, "ignoring move idx %u from opponent (count=%d)", mv,
@@ -540,9 +599,9 @@ static incoming_attack_t attack_of(int player, int move_idx) {
   CHECK(move_idx >= 0 && move_idx < mons[player].move_count,
         "move_idx %d out of range for %s (count=%d)", move_idx,
         mons[player].name, mons[player].move_count);
-  move_t *mv = &mons[player].moves[move_idx];
-  incoming_attack_t a = {mv->name, mv->type, mv->power};
-  return a;
+  // make_attack fills level/Attack/STAB from the attacker so the Gen 3
+  // damage formula scales with level.
+  return make_attack(&mons[player], move_idx);
 }
 
 // "<attacker> used <move>!" for the current strike.
@@ -560,8 +619,14 @@ static void strike_apply(void) {
   redraw_hp();
 }
 
-// Past the last strike: battle over (faint) or back to commands.
+// Past the last strike: optional level-up line, then over or commands.
 static void strike_finish(void) {
+  if (post_turn_msg[0]) {
+    log_stream_start(post_turn_msg, false);
+    post_turn_msg[0] = '\0';
+    strike_phase = SP_POST_TURN;
+    return;
+  }
   if (over_pending) {
     show_over();
     return;
@@ -593,10 +658,11 @@ static void resolve_turn(void) {
   eff_text(strikes[0].eff, sizeof(strikes[0].eff), e0, mons[1].name,
            faint1);
   n_strikes = 1;
+  bool faint0 = false;
   if (!faint1) {
     float e1 = attack_multiplier(&a1, &mons[0]);
     int d1 = calculate_damage(&a1, &mons[0]);
-    bool faint0 = mons[0].health - d1 <= 0;
+    faint0 = mons[0].health - d1 <= 0;
     strikes[1].atk = 1;
     strikes[1].def = 0;
     strikes[1].dmg = d1;
@@ -607,6 +673,19 @@ static void resolve_turn(void) {
     n_strikes = 2;
   }
 
+  post_turn_msg[0] = '\0';
+  // Award experience on KO (Gen 3). Uses precomputed faints because HP
+  // is not applied until each strike animates.
+  int loser = faint1 ? 1 : (faint0 ? 0 : -1);
+  if (loser >= 0) {
+    int winner = 1 - loser;
+    int levels = pokemon_gain_exp(&mons[winner], exp_yield(&mons[loser]));
+    if (levels > 0) {
+      snprintf(post_turn_msg, sizeof(post_turn_msg), "%s grew to Lv.%d!",
+               mons[winner].name, mons[winner].level);
+    }
+  }
+
   // Advance bookkeeping (remember this move for catch-up resends).
   prev_turn = turn;
   prev_move = my_move;
@@ -614,8 +693,6 @@ static void resolve_turn(void) {
   my_move = -1;
   opp_move = -1;
 
-  bool faint0 = n_strikes > 1 &&
-                  mons[0].health - strikes[1].dmg <= 0;
   over_pending = faint1 || faint0;
   over_won = (opp_idx == 1) ? faint1 : faint0;
   ESP_LOGI(TAG, "turn resolved, streaming strikes (n=%d)", n_strikes);
@@ -690,15 +767,13 @@ static lv_obj_t *make_caption_text(lv_obj_t *scr, int x, int y, int w) {
 void ui_duel_enter(void) {
   // Deterministic roles: lower MAC is player 0.
   me_is_p0 = memcmp(net_mac(), opp_mac, 6) < 0;
-  mons[0] = DEX[0];
-  mons[1] = DEX[1];
   me_idx = me_is_p0 ? 0 : 1;
   opp_idx = 1 - me_idx;
-
-  // Dex sanity: move_count drives menu modulo + array indexing.
-  for (int i = 0; i < 2; i++)
-    CHECK(mons[i].move_count > 0 && mons[i].move_count <= MAX_MOVES,
-          "%s has bad move_count %d", mons[i].name, mons[i].move_count);
+  my_species = game_active_species();
+  opp_synced = false;
+  CHECK(game_load_active(&mons[me_idx]), "game_load_active failed");
+  CHECK(mons[me_idx].move_count > 0 && mons[me_idx].move_count <= MAX_MOVES,
+        "%s has bad move_count %d", mons[me_idx].name, mons[me_idx].move_count);
 
   turn = 0;
   my_move = -1;
@@ -718,13 +793,14 @@ void ui_duel_enter(void) {
   strike_phase = SP_SINGLE;
   neutral_until = 0;
   over_pending = over_won = false;
+  post_turn_msg[0] = '\0';
   bars_init = false;
   intro_top = intro_bot = NULL;
   intro_done = true;
   n_party_objs = 0;
   for (int i = 0; i < (int)(sizeof(party_objs) / sizeof(party_objs[0])); i++)
     party_objs[i] = NULL;
-  st = DS_COMMAND;
+  st = DS_SYNC;
 
   ESP_LOGI(TAG, "enter vs '%s' as p%d (%s)", opp_name, me_is_p0 ? 0 : 1,
            mons[me_idx].name);
@@ -755,7 +831,7 @@ void ui_duel_enter(void) {
   // Names are static for the duel; HP numbers + bars redraw every turn.
   // Foe HP numbers are hidden (bar only).
   foe_name_label = make_plate_label(scr, DUEL_FOE_NAME_X, DUEL_FOE_NAME_Y);
-  lv_label_set_text(foe_name_label, mons[opp_idx].name);
+  lv_label_set_text(foe_name_label, "???");
   foe_hp_label = make_plate_label(scr, DUEL_FOE_HP_X, DUEL_FOE_HP_Y);
   lv_label_set_text(foe_hp_label, "");
   lv_obj_add_flag(foe_hp_label, LV_OBJ_FLAG_HIDDEN);
@@ -763,7 +839,7 @@ void ui_duel_enter(void) {
                         DUEL_FOE_BAR_W, DUEL_FOE_BAR_H);
 
   me_name_label = make_plate_label(scr, DUEL_ME_NAME_X, DUEL_ME_NAME_Y);
-  lv_label_set_text(me_name_label, mons[me_idx].name);
+  set_name_plate(me_name_label, &mons[me_idx]);
   me_hp_label = make_plate_label(scr, DUEL_ME_HP_X, DUEL_ME_HP_Y);
   lv_obj_set_width(me_hp_label, DUEL_ME_HP_W);
   lv_obj_set_style_text_align(me_hp_label, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
@@ -813,14 +889,23 @@ void ui_duel_enter(void) {
   lvgl_port_unlock();
 
   redraw_hp();
-  to_command();
-  intro_start_bars();  // FireRed-style black-bar wipe over the scene
-  ESP_LOGI(TAG, "your move — command menu");
+  intro_done = true;  // intro runs after sync
+  show_group(true, false, false);
+  log_stream_start("Syncing...", false);
+  last_send = 0;
+  send_setup();
 }
 
 void ui_duel_tick(uint32_t now, const btn_event_t *ev) {
   duel_now = now;
   drain_net();
+  if (st == DS_SYNC) {
+    if (!opp_synced && now - last_send > RESEND_MS) {
+      last_send = now;
+      send_setup();
+    }
+    return;
+  }
   intro_update(now);
   if (!intro_done) return;  // wipe plays out before any input
 
@@ -831,6 +916,8 @@ void ui_duel_tick(uint32_t now, const btn_event_t *ev) {
   }
 
   switch (st) {
+    case DS_SYNC:
+      break;
     case DS_LOG: {
       stream_pump(now);
       if (stream_busy()) {
@@ -861,6 +948,14 @@ void ui_duel_tick(uint32_t now, const btn_event_t *ev) {
           break;
         case SP_NEUTRAL_HOLD:
           if (now >= neutral_until) adv = true;
+          break;
+        case SP_POST_TURN:
+          if (now - stream_done_at >= RECAP_HOLD_MS) {
+            if (over_pending)
+              show_over();
+            else
+              to_command();
+          }
           break;
         case SP_SINGLE:
           // One-off line (e.g. send error): brief hold, then command.
@@ -958,7 +1053,7 @@ void ui_duel_tick(uint32_t now, const btn_event_t *ev) {
         if (stream_busy())
           stream_finish_now();  // first A completes the line
         else
-          nav_show(SCR_PLAY);  // back to the lobby
+          duel_save_and_exit();
       }
       break;
     case DS_PARTY:
@@ -979,12 +1074,13 @@ bool ui_duel_home(const btn_event_t *ev) {
     return true;
   }
   ESP_LOGI(TAG, "duel exited via Home");
-  nav_show(SCR_PLAY);  // forfeit / leave -> lobby
+  duel_save_and_exit();
   return true;
 }
 
 static const char *state_name(duel_state_t s) {
   switch (s) {
+    case DS_SYNC: return "sync";
     case DS_LOG: return "log";
     case DS_COMMAND: return "command";
     case DS_SELECT: return "moves";
@@ -997,8 +1093,12 @@ static const char *state_name(duel_state_t s) {
 
 void ui_duel_debug(char *out, int cap) {
   if (!out || cap < 1) return;
-  snprintf(out, cap, "duel vs='%s' st=%s turn=%u me=p%d(%s) hp=%d/%d opp=%d/%d cur=%d,%d/%d",
+  snprintf(out, cap,
+           "duel vs='%s' st=%s turn=%u me=p%d(%s L%d) hp=%d/%d exp=%d/+%d "
+           "opp=%s L%d %d/%d cur=%d,%d/%d",
            opp_name, state_name(st), turn, me_is_p0 ? 0 : 1, mons[me_idx].name,
-           mons[me_idx].health, mons[me_idx].max_health,
-           mons[opp_idx].health, mons[opp_idx].max_health, cmd_col, cmd_row, move_idx);
+           mons[me_idx].level, mons[me_idx].health, mons[me_idx].max_health,
+           mons[me_idx].exp, exp_to_next_level(&mons[me_idx]),
+           mons[opp_idx].name, mons[opp_idx].level, mons[opp_idx].health,
+           mons[opp_idx].max_health, cmd_col, cmd_row, move_idx);
 }
