@@ -55,7 +55,7 @@ static void status_show(const char *s, bool is_err) {
   if (!lvgl_port_lock(0)) return;
   lv_label_set_text(status_label, s);
   lv_obj_set_style_text_color(status_label,
-                              is_err ? lv_color_hex(0xD83828) : ROW_INK,
+                              is_err ? lv_color_hex(0xFF7070) : lv_color_white(),
                               LV_PART_MAIN);
   lvgl_port_unlock();
 }
@@ -96,14 +96,12 @@ static void list_redraw(void) {
   for (int v = 0; v < PLAY_ROWS_SHOWN; v++) {
     int r = ws + v;
     if (r >= rows) {
-      lv_obj_set_flag(row_slots[v], LV_OBJ_FLAG_HIDDEN, true);
       lv_obj_set_flag(row_names[v], LV_OBJ_FLAG_HIDDEN, true);
       continue;
     }
-    lv_obj_set_flag(row_slots[v], LV_OBJ_FLAG_HIDDEN, false);
     lv_obj_set_flag(row_names[v], LV_OBJ_FLAG_HIDDEN, false);
     if (r == 0) {
-      lv_label_set_text(row_names[v], "rescan");
+      lv_label_set_text(row_names[v], "refresh");
     } else if (r - 1 < n_peers) {
       char nm[PLAY_NAME_CHARS + 1];
       strncpy(nm, peers[r - 1].name, PLAY_NAME_CHARS);
@@ -123,7 +121,6 @@ static void list_redraw(void) {
 static void show_dialog(bool on) {
   if (!lvgl_port_lock(0)) return;
   for (int v = 0; v < PLAY_ROWS_SHOWN; v++) {
-    lv_obj_set_flag(row_slots[v], LV_OBJ_FLAG_HIDDEN, on);
     lv_obj_set_flag(row_names[v], LV_OBJ_FLAG_HIDDEN, on);
   }
   lv_obj_set_flag(row_cursor, LV_OBJ_FLAG_HIDDEN, on);
@@ -138,7 +135,7 @@ static void show_browse(void) {
   n_peers = lobby_list(peers, LOBBY_MAX_PEERS);
   show_dialog(false);
   list_redraw();
-  status_show("A: rescan / challenge", false);
+  status_show("A: refresh / challenge", false);
   hal_led_set_all(0, 0, 8);
 }
 
@@ -148,28 +145,13 @@ void ui_play_enter(void) {
   hal_display_reset();
   lv_obj_t *scr = lv_scr_act();
 
-  lv_obj_t *bg = lv_image_create(scr);
-  lv_image_set_src(bg, &assets_party_bg);
-  lv_obj_set_pos(bg, 0, 0);
-
-  // YOU plate: my name on the baked plate, bar always full (decorative).
+  // Text-only lobby on the plain teal screen (no party backdrop art,
+  // no slot rows, no decorative HP bar).
+  // YOU row: my name as plain text.
   you_name_label = lv_label_create(scr);
   lv_obj_set_style_text_font(you_name_label, BADGE_FONT_SMALL, LV_PART_MAIN);
-  lv_obj_set_style_text_color(you_name_label, ROW_INK, LV_PART_MAIN);
+  lv_obj_set_style_text_color(you_name_label, lv_color_white(), LV_PART_MAIN);
   lv_obj_set_pos(you_name_label, PARTY_YOU_NAME_X, PARTY_YOU_NAME_Y);
-  lv_obj_t *you_bar = lv_bar_create(scr);
-  lv_obj_set_pos(you_bar, PARTY_YOU_BAR_X, PARTY_YOU_BAR_Y);
-  lv_obj_set_size(you_bar, PARTY_YOU_BAR_W, PARTY_YOU_BAR_H);
-  lv_obj_set_style_bg_opa(you_bar, LV_OPA_TRANSP, LV_PART_MAIN);
-  lv_obj_set_style_border_width(you_bar, 0, LV_PART_MAIN);
-  lv_obj_set_style_border_width(you_bar, 0, LV_PART_INDICATOR);
-  lv_obj_set_style_radius(you_bar, 0, LV_PART_MAIN);
-  lv_obj_set_style_radius(you_bar, 0, LV_PART_INDICATOR);
-  lv_obj_set_style_pad_all(you_bar, 0, LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(you_bar, LV_OPA_COVER, LV_PART_INDICATOR);
-  lv_obj_set_style_bg_color(you_bar, lv_color_hex(0x38B838), LV_PART_INDICATOR);
-  lv_bar_set_range(you_bar, 0, 1);
-  lv_bar_set_value(you_bar, 1, LV_ANIM_OFF);
 
   title_label = lv_label_create(scr);
   lv_label_set_text(title_label, "play");
@@ -179,13 +161,11 @@ void ui_play_enter(void) {
 
   for (int v = 0; v < PLAY_ROWS_SHOWN; v++) {
     int y = PLAY_ROWS_Y + v * PLAY_ROW_PITCH;
-    row_slots[v] = lv_image_create(scr);
-    lv_image_set_src(row_slots[v], &assets_slot);
-    lv_obj_set_pos(row_slots[v], PLAY_SLOT_X, y);
+    row_slots[v] = NULL;  // unused: text-only rows (kept for sizing)
     row_names[v] = lv_label_create(scr);
-    lv_obj_set_style_text_font(row_names[v], BADGE_FONT_SMALL, LV_PART_MAIN);
+    lv_obj_set_style_text_font(row_names[v], BADGE_FONT, LV_PART_MAIN);
     lv_obj_set_style_text_color(row_names[v], lv_color_white(), LV_PART_MAIN);
-    lv_obj_set_pos(row_names[v], PLAY_NAME_X, y + 12);
+    lv_obj_set_pos(row_names[v], PLAY_NAME_X, y + 8);
     lv_obj_set_width(row_names[v], PLAY_NAME_W);
   }
   row_cursor = lv_image_create(scr);
@@ -195,7 +175,7 @@ void ui_play_enter(void) {
   lv_image_set_src(bubble_img, &assets_bubble);
   lv_obj_set_pos(bubble_img, PLAY_BUBBLE_X, PLAY_BUBBLE_Y);
   bubble_label = lv_label_create(scr);
-  lv_obj_set_style_text_font(bubble_label, BADGE_FONT_SMALL, LV_PART_MAIN);
+  lv_obj_set_style_text_font(bubble_label, BADGE_FONT, LV_PART_MAIN);
   lv_obj_set_style_text_color(bubble_label, ROW_INK, LV_PART_MAIN);
   lv_obj_set_pos(bubble_label, PLAY_BUBBLE_TEXT_X, PLAY_BUBBLE_TEXT_Y);
   lv_obj_set_width(bubble_label, PLAY_BUBBLE_TEXT_W);
@@ -203,7 +183,7 @@ void ui_play_enter(void) {
 
   status_label = lv_label_create(scr);
   lv_obj_set_style_text_font(status_label, BADGE_FONT_SMALL, LV_PART_MAIN);
-  lv_obj_set_style_text_color(status_label, ROW_INK, LV_PART_MAIN);
+  lv_obj_set_style_text_color(status_label, lv_color_white(), LV_PART_MAIN);
   lv_obj_set_pos(status_label, PARTY_DLG_X, PARTY_DLG_Y);
   lv_obj_set_width(status_label, PARTY_DLG_W);
   lv_label_set_long_mode(status_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
@@ -211,8 +191,8 @@ void ui_play_enter(void) {
   show_browse();
   you_refresh();
   esp_err_t err = lobby_refresh();  // auto-scan on open
-  status_show(err == ESP_OK ? "scanning..." : "scan failed", err != ESP_OK);
-  if (err != ESP_OK) status_net_err("scan", err);
+  status_show(err == ESP_OK ? "refreshing..." : "refresh failed", err != ESP_OK);
+  if (err != ESP_OK) status_net_err("refresh", err);
 }
 
 static void to_wait(const lobby_peer_t *p) {
@@ -293,9 +273,9 @@ void ui_play_tick(uint32_t now_ms, const btn_event_t *ev) {
         if (cursor == 0) {
           esp_err_t err = lobby_refresh();
           if (err != ESP_OK)
-            status_net_err("scan", err);
+            status_net_err("refresh", err);
           else
-            status_show("scanning...", false);
+            status_show("refreshing...", false);
         } else if (cursor - 1 < n_peers) {
           to_wait(&peers[cursor - 1]);
         }

@@ -35,14 +35,16 @@ LV_IMAGE_DECLARE(assets_cursor_sm);
 #define DUEL_FOE_BAR_Y 47
 #define DUEL_FOE_BAR_W 57
 #define DUEL_FOE_BAR_H 3
-// Player (bottom-right) plate.
+// Player (bottom-right) plate. Bar extends a few px left and a bit
+// more right vs the baked art so the fill reads clearly.
 #define DUEL_ME_NAME_X 192
 #define DUEL_ME_NAME_Y 117
 #define DUEL_ME_HP_X 192
 #define DUEL_ME_HP_Y 141
-#define DUEL_ME_BAR_X 236
+#define DUEL_ME_HP_W 98
+#define DUEL_ME_BAR_X 232
 #define DUEL_ME_BAR_Y 135
-#define DUEL_ME_BAR_W 54
+#define DUEL_ME_BAR_W 66
 #define DUEL_ME_BAR_H 4
 // Bottom strip: caption bubbles carry the log / prompt, the speech
 // bubble carries the command menu. NOTE: speech-bubble-full art does
@@ -54,9 +56,9 @@ LV_IMAGE_DECLARE(assets_cursor_sm);
 #define DUEL_STRIP_Y 166
 #define DUEL_CAP_X 2
 #define DUEL_CAP_Y 171
-#define DUEL_LOG_X 14
-#define DUEL_LOG_Y 181
-#define DUEL_LOG_W 292
+#define DUEL_LOG_X 18
+#define DUEL_LOG_Y 185
+#define DUEL_LOG_W 284
 #define DUEL_PROMPT_W 144
 #define DUEL_SPEECH_X 172
 #define DUEL_SPEECH_Y 171
@@ -65,9 +67,10 @@ LV_IMAGE_DECLARE(assets_cursor_sm);
 #define DUEL_CMD_COL_X1 244
 #define DUEL_CMD_ROW_Y0 183
 #define DUEL_CMD_ROW_Y1 207
-// Move list (inside the full caption): 2 cols x 2 rows.
-#define DUEL_MV_COL_X0 24
-#define DUEL_MV_COL_X1 174
+// Move list (inside the full caption): 2 cols x 2 rows, nudged toward
+// the centre so the cursor stays on-screen on the left column.
+#define DUEL_MV_COL_X0 36
+#define DUEL_MV_COL_X1 164
 #define DUEL_MV_ROW_Y0 183
 #define DUEL_MV_ROW_Y1 207
 // Small cursor sits left of the active text: x - 10, y - 4.
@@ -86,7 +89,7 @@ LV_IMAGE_DECLARE(assets_cursor_sm);
 #define PARTY_DLG_Y 202
 #define PARTY_DLG_W 222
 
-// Play lobby rows: slot image + cursor + name label.
+// Play lobby rows: plain text list (no slot art) + cursor + name.
 #define PLAY_TITLE_X 150
 #define PLAY_TITLE_Y 8
 #define PLAY_ROWS_Y 80
@@ -96,8 +99,8 @@ LV_IMAGE_DECLARE(assets_cursor_sm);
 #define PLAY_SLOT_W 177
 #define PLAY_SLOT_H 36
 #define PLAY_CURSOR_X 12
-#define PLAY_NAME_X 212
-#define PLAY_NAME_W 100
+#define PLAY_NAME_X 36
+#define PLAY_NAME_W 220
 
 // Challenge dialog: bubble frame + text inside its white interior.
 #define PLAY_BUBBLE_X 14

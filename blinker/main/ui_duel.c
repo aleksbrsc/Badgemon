@@ -41,6 +41,10 @@
 static const char *TAG = "duel";
 
 #define RESEND_MS 400  // rebroadcast pending move while waiting
+// Caption text streams one char per tick slice, then each recap line
+// holds before auto-advancing (no A press).
+#define STREAM_CH_MS 30
+#define RECAP_HOLD_MS 2000
 // Plate text is dark-on-cream; caption text is light-on-navy;
 // speech-bubble options are dark-on-white.
 #define PLATE_INK lv_color_hex(0x1F353C)
@@ -48,9 +52,11 @@ static const char *TAG = "duel";
 
 // Command menu options: (col,row). FIGHT works; the rest are stubs
 // until their screens exist (party screen owns BADGEMON later).
+// Layout: FIGHT BAG / BADGEMON RUN (BAG top-right, BADGEMON bottom-left
+// so each quip fires on the right cell).
 static const char *CMD_OPTS[2][2] = {
-    {"FIGHT", "BAG"},
-    {"BADG\xC3\xA9MON", "RUN"},  // BADGéMON (UTF-8 é, via font fallback)
+    {"FIGHT", "BADGEMON"},
+    {"BAG", "RUN"},
 };
 
 typedef enum { DS_LOG, DS_COMMAND, DS_SELECT, DS_WAIT, DS_OVER } duel_state_t;
@@ -97,6 +103,17 @@ static int move_idx;          // move menu cursor (linear into 2-col grid)
 static uint32_t last_send;
 static int blink_div = 0;
 
+// Caption text streamer + two-line turn recap. resolve_turn() queues
+// one line per attacker; DS_LOG streams line 0, holds RECAP_HOLD_MS,
+// streams line 1, holds again, then auto-continues (command or over).
+static uint32_t duel_now;
+static char stream_full[192];
+static int stream_len, stream_pos;
+static uint32_t stream_last, stream_done_at;
+static char recap_msgs[2][160];
+static int recap_n, recap_i;
+static bool recap_over_pending, recap_won;
+
 // ---- LVGL objects ---------------------------------------------------
 static lv_obj_t *foe_name_label;
 static lv_obj_t *foe_hp_label;
@@ -129,17 +146,65 @@ static void name_upper(const char *in, char *out, int cap) {
   out[i] = '\0';
 }
 
-// Green info vs red error log (errors also go to the log with context).
-static void status_show(const char *s, bool is_err) {
-  ESP_LOGI(TAG, "status: %s", s);
+// Caption log with typewriter streaming: new text starts empty and
+// fills one char per STREAM_CH_MS in ui_duel_tick. A press while
+// streaming completes the line instantly.
+static void log_stream_start(const char *s, bool is_err) {
+  if (!s) s = "";
+  strncpy(stream_full, s, sizeof(stream_full) - 1);
+  stream_full[sizeof(stream_full) - 1] = '\0';
+  stream_len = (int)strlen(stream_full);
+  stream_pos = 0;
+  stream_last = duel_now;
+  stream_done_at = 0;
+  if (stream_len == 0) stream_done_at = duel_now;
   if (!log_label) return;
   if (!lvgl_port_lock(0)) return;
-  lv_label_set_text(log_label, s);
+  lv_label_set_text(log_label, stream_len == 0 ? "" : " ");
   lv_obj_set_style_text_color(log_label,
                               is_err ? lv_color_hex(0xFF6060) : lv_color_hex(0xB0FFB0),
                               LV_PART_MAIN);
   lvgl_port_unlock();
 }
+
+// Green info vs red error log (errors also go to the log with context).
+static void status_show(const char *s, bool is_err) {
+  ESP_LOGI(TAG, "status: %s", s);
+  recap_n = 0;  // single line, no recap sequence
+  recap_over_pending = false;
+  log_stream_start(s, is_err);
+}
+
+static void stream_finish_now(void) {
+  if (!log_label || stream_pos >= stream_len) return;
+  stream_pos = stream_len;
+  stream_done_at = duel_now;
+  if (!lvgl_port_lock(0)) return;
+  lv_label_set_text(log_label, stream_full);
+  lvgl_port_unlock();
+}
+
+static void stream_pump(uint32_t now) {
+  if (!log_label || stream_pos >= stream_len) return;
+  if (now - stream_last < STREAM_CH_MS) return;
+  stream_last = now;
+  stream_pos++;
+  if (stream_pos >= stream_len) {
+    stream_done_at = now;
+    if (!lvgl_port_lock(0)) return;
+    lv_label_set_text(log_label, stream_full);
+    lvgl_port_unlock();
+    return;
+  }
+  char tmp[192];
+  memcpy(tmp, stream_full, (size_t)stream_pos);
+  tmp[stream_pos] = '\0';
+  if (!lvgl_port_lock(0)) return;
+  lv_label_set_text(log_label, tmp);
+  lvgl_port_unlock();
+}
+
+static bool stream_busy(void) { return stream_pos < stream_len; }
 
 // Surface a failed send on-screen: "what failed: ESP_ERR_...".
 static void status_net_err(const char *what, esp_err_t err) {
@@ -162,7 +227,7 @@ static void bar_set(lv_obj_t *bar, int hp, int max_hp) {
   if (!bar) return;
   if (!lvgl_port_lock(0)) return;
   lv_bar_set_range(bar, 0, max_hp > 0 ? max_hp : 1);
-  lv_bar_set_value(bar, hp, LV_ANIM_OFF);
+  lv_bar_set_value(bar, hp, LV_ANIM_ON);
   lv_obj_set_style_bg_color(bar, hp_color(hp, max_hp), LV_PART_INDICATOR);
   lvgl_port_unlock();
 }
@@ -172,8 +237,8 @@ static void redraw_hp(void) {
   if (!lvgl_port_lock(0)) return;
   char buf[24];
   pokemon_t *mp = &mons[me_idx], *op = &mons[opp_idx];
-  snprintf(buf, sizeof(buf), "%d/%d", op->health, op->max_health);
-  lv_label_set_text(foe_hp_label, buf);
+  // Foe HP numbers stay hidden (bar only); keep the label blank.
+  lv_label_set_text(foe_hp_label, "");
   snprintf(buf, sizeof(buf), "%d/%d", mp->health, mp->max_health);
   lv_label_set_text(me_hp_label, buf);
   lvgl_port_unlock();
@@ -329,19 +394,20 @@ static void resolve_turn(void) {
   incoming_attack_t a1 = attack_of(1, mv1);
 
   // Player 0 strikes first (deterministic tiebreak by MAC order).
-  char log[160];
-  int n = 0;
+  // Queue one recap line per attacker; DS_LOG streams line 0, holds,
+  // then streams line 1 and auto-continues (no A press).
   float e0 = attack_multiplier(&a0, &mons[1]);
   hit(&mons[1], &a0);
-  n += snprintf(log + n, sizeof(log) - n, "%s: %s (%s)",
-                mons[0].name, a0.name, eff_word(e0));
+  snprintf(recap_msgs[0], sizeof(recap_msgs[0]), "%s: %s (%s)",
+           mons[0].name, a0.name, eff_word(e0));
   if (!is_fainted(&mons[1])) {
     float e1 = attack_multiplier(&a1, &mons[0]);
     hit(&mons[0], &a1);
-    n += snprintf(log + n, sizeof(log) - n, " %s: %s (%s)",
-                  mons[1].name, a1.name, eff_word(e1));
+    snprintf(recap_msgs[1], sizeof(recap_msgs[1]), "%s: %s (%s)",
+             mons[1].name, a1.name, eff_word(e1));
   } else {
-    n += snprintf(log + n, sizeof(log) - n, " %s fainted!", mons[1].name);
+    snprintf(recap_msgs[1], sizeof(recap_msgs[1]), "%s fainted!",
+             mons[1].name);
   }
 
   // Advance bookkeeping (remember this move for catch-up resends).
@@ -351,24 +417,35 @@ static void resolve_turn(void) {
   my_move = -1;
   opp_move = -1;
 
-  redraw_hp();
+  redraw_hp();  // bars animate while the recap streams
 
-  if (is_fainted(&mons[me_idx]) || is_fainted(&mons[opp_idx])) {
-    st = DS_OVER;
-    bool won = is_fainted(&mons[opp_idx]);
-    char over[192];
-    snprintf(over, sizeof(over), "%s %s", log, won ? "YOU WIN!" : "you lose...");
-    show_group(true, false, false);
-    status_show(over, !won);
-    hal_led_set_all(won ? 0 : 40, won ? 40 : 0, 0);
-    ESP_LOGI(TAG, "duel over: %s", won ? "win" : "lose");
-    return;
-  }
+  recap_n = 2;
+  recap_i = 0;
+  recap_over_pending =
+      is_fainted(&mons[me_idx]) || is_fainted(&mons[opp_idx]);
+  recap_won = is_fainted(&mons[opp_idx]);
+  if (recap_over_pending)
+    ESP_LOGI(TAG, "turn resolved, streaming recap then over");
+  else
+    ESP_LOGI(TAG, "turn resolved, streaming recap");
 
   st = DS_LOG;
   show_group(true, false, false);
-  status_show(log, false);
-  ESP_LOGI(TAG, "turn resolved, A for command menu");
+  log_stream_start(recap_msgs[0], false);
+}
+
+// Show the pending battle-over line after the recap finishes.
+static void show_over(void) {
+  st = DS_OVER;
+  bool won = recap_won;
+  recap_over_pending = false;
+  recap_n = 0;
+  char over[64];
+  snprintf(over, sizeof(over), "%s", won ? "YOU WIN!" : "you lose...");
+  show_group(true, false, false);
+  log_stream_start(over, !won);
+  hal_led_set_all(won ? 0 : 40, won ? 40 : 0, 0);
+  ESP_LOGI(TAG, "duel over: %s", won ? "win" : "lose");
 }
 
 // ---- Screen lifecycle ----------------------------------------------
@@ -391,6 +468,8 @@ static lv_obj_t *make_hp_bar(lv_obj_t *scr, int x, int y, int w, int h) {
   lv_obj_set_style_radius(bar, 0, LV_PART_INDICATOR);
   lv_obj_set_style_pad_all(bar, 0, LV_PART_MAIN);
   lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_INDICATOR);
+  lv_obj_set_style_anim_time(bar, 600, LV_PART_MAIN);
+  lv_obj_set_style_anim_time(bar, 600, LV_PART_INDICATOR);
   return bar;
 }
 
@@ -435,6 +514,12 @@ void ui_duel_enter(void) {
   move_idx = 0;
   last_send = 0;
   blink_div = 0;
+  duel_now = 0;
+  stream_full[0] = '\0';
+  stream_len = stream_pos = 0;
+  stream_last = stream_done_at = 0;
+  recap_n = recap_i = 0;
+  recap_over_pending = recap_won = false;
   st = DS_COMMAND;
 
   ESP_LOGI(TAG, "enter vs '%s' as p%d (%s)", opp_name, me_is_p0 ? 0 : 1,
@@ -463,15 +548,20 @@ void ui_duel_enter(void) {
   lv_obj_set_pos(bg, 0, 0);
 
   // Names are static for the duel; HP numbers + bars redraw every turn.
+  // Foe HP numbers are hidden (bar only).
   foe_name_label = make_plate_label(scr, DUEL_FOE_NAME_X, DUEL_FOE_NAME_Y);
   lv_label_set_text(foe_name_label, mons[opp_idx].name);
   foe_hp_label = make_plate_label(scr, DUEL_FOE_HP_X, DUEL_FOE_HP_Y);
+  lv_label_set_text(foe_hp_label, "");
+  lv_obj_add_flag(foe_hp_label, LV_OBJ_FLAG_HIDDEN);
   foe_bar = make_hp_bar(scr, DUEL_FOE_BAR_X, DUEL_FOE_BAR_Y,
                         DUEL_FOE_BAR_W, DUEL_FOE_BAR_H);
 
   me_name_label = make_plate_label(scr, DUEL_ME_NAME_X, DUEL_ME_NAME_Y);
   lv_label_set_text(me_name_label, mons[me_idx].name);
   me_hp_label = make_plate_label(scr, DUEL_ME_HP_X, DUEL_ME_HP_Y);
+  lv_obj_set_width(me_hp_label, DUEL_ME_HP_W);
+  lv_obj_set_style_text_align(me_hp_label, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
   me_bar = make_hp_bar(scr, DUEL_ME_BAR_X, DUEL_ME_BAR_Y,
                        DUEL_ME_BAR_W, DUEL_ME_BAR_H);
 
@@ -523,6 +613,7 @@ void ui_duel_enter(void) {
 }
 
 void ui_duel_tick(uint32_t now, const btn_event_t *ev) {
+  duel_now = now;
   drain_net();
 
   // Resolve as soon as both moves are in (from net or from my pick).
@@ -533,7 +624,26 @@ void ui_duel_tick(uint32_t now, const btn_event_t *ev) {
 
   switch (st) {
     case DS_LOG:
-      if (ev->a) to_command();  // A advances to the command menu
+      stream_pump(now);
+      if (stream_busy()) {
+        if (ev->a) stream_finish_now();  // skip the typewriter
+        break;
+      }
+      if (recap_n > 0 && recap_i + 1 < recap_n) {
+        // First line fully streamed: hold, then stream the next line.
+        if (now - stream_done_at >= RECAP_HOLD_MS) {
+          recap_i++;
+          log_stream_start(recap_msgs[recap_i], false);
+        }
+      } else if (recap_over_pending) {
+        if (now - stream_done_at >= RECAP_HOLD_MS) show_over();
+      } else if (recap_n > 0) {
+        // Full recap streamed: hold, then back to the command menu.
+        if (now - stream_done_at >= RECAP_HOLD_MS) to_command();
+      } else {
+        // Single-line log (e.g. send error): brief hold, then command.
+        if (ev->a || now - stream_done_at >= RECAP_HOLD_MS) to_command();
+      }
       break;
     case DS_COMMAND: {
       bool moved = false;
@@ -592,6 +702,7 @@ void ui_duel_tick(uint32_t now, const btn_event_t *ev) {
       break;
     }
     case DS_WAIT:
+      stream_pump(now);
       // Amber pulse while waiting (same language as the lobby wait).
       if (++blink_div >= 5) {
         blink_div = 0;
@@ -605,7 +716,13 @@ void ui_duel_tick(uint32_t now, const btn_event_t *ev) {
       }
       break;
     case DS_OVER:
-      if (ev->a) nav_show(SCR_PLAY);  // back to the lobby
+      stream_pump(now);
+      if (ev->a) {
+        if (stream_busy())
+          stream_finish_now();  // first A completes the line
+        else
+          nav_show(SCR_PLAY);  // back to the lobby
+      }
       break;
   }
 }
