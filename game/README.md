@@ -103,7 +103,7 @@ source /opt/esp-idf/export.sh    # every terminal (or add to ~/.bashrc)
 ## Build
 
 ```sh
-cd blinker
+cd game
 source /opt/esp-idf/export.sh
 make build
 ```
@@ -120,7 +120,7 @@ uses raw esptool with `--no-stub` instead.
 3. Flash:
 
 ```sh
-cd blinker
+cd game
 source /opt/esp-idf/export.sh
 make flash                       # PORT=/dev/ttyACM0, BAUD=115200 by default
 make flash PORT=/dev/ttyACM1     # override if needed

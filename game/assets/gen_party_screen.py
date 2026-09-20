@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate blinker/assets/party-screen.png (320x240) approximating the
+"""Generate game/assets/party-screen.png (320x240) approximating the
 reference party screen: teal striped backdrop, light-blue status panel
 top-left with an empty HP trough, white bottom dialog bar, purple tab
 bottom-right. Dynamic text/bars are overlaid by ui_duel.c at the
