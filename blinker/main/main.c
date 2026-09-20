@@ -1,4 +1,5 @@
 /*
+ * blinker: 6x WS2812 blink (GPIO3, dim red) + LVGL "hello htn" on ST7789.
  * ping badge: single ESP-NOW ping app with button keyboard composer.
  * Controls: Up/Down digit, Left/Right cursor, A send, B clear, H demo.
  * Payload format: payload.h. See README.md.
@@ -19,6 +20,7 @@
 #include "store.h"
 #include "nav.h"
 #include "debug.h"
+#include "fault.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
@@ -26,37 +28,55 @@
 
 static const char *TAG = "main";
 
-static const char *reset_name(esp_reset_reason_t r) {
-  switch (r) {
-    case ESP_RST_POWERON: return "POWERON";
-    case ESP_RST_EXT: return "EXT";
-    case ESP_RST_SW: return "SW";
-    case ESP_RST_PANIC: return "PANIC";
-    case ESP_RST_INT_WDT: return "INT_WDT";
-    case ESP_RST_TASK_WDT: return "TASK_WDT";
-    case ESP_RST_WDT: return "WDT";
-    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
-    case ESP_RST_BROWNOUT: return "BROWNOUT";
-    case ESP_RST_SDIO: return "SDIO";
-    default: return "?";
+static const char *reset_name(esp_reset_reason_t r)
+{
+  switch (r)
+  {
+  case ESP_RST_POWERON:
+    return "POWERON";
+  case ESP_RST_EXT:
+    return "EXT";
+  case ESP_RST_SW:
+    return "SW";
+  case ESP_RST_PANIC:
+    return "PANIC";
+  case ESP_RST_INT_WDT:
+    return "INT_WDT";
+  case ESP_RST_TASK_WDT:
+    return "TASK_WDT";
+  case ESP_RST_WDT:
+    return "WDT";
+  case ESP_RST_DEEPSLEEP:
+    return "DEEPSLEEP";
+  case ESP_RST_BROWNOUT:
+    return "BROWNOUT";
+  case ESP_RST_SDIO:
+    return "SDIO";
+  default:
+    return "?";
   }
 }
 
-void app_main(void) {
+void app_main(void)
+{
+  fault_init(); // report reset reason; loud banner if last boot crashed
   ESP_LOGI(TAG, "ping badge booting (reset=%s)", reset_name(esp_reset_reason()));
   hal_buttons_init();
   hal_led_init();
   hal_display_init();
+  fault_show_boot_banner(); // hold the crash reason on-screen (crash only)
   hal_i2c_init();
   net_init();
-  store_init();  // NVS ready (nvs_flash_init ran in net_init)
-  debug_init();  // serial REPL over USB-Serial-JTAG
+  store_init(); // NVS ready (nvs_flash_init ran in net_init)
+  debug_init(); // serial REPL over USB-Serial-JTAG
   nav_show(SCR_MENU);
 
   btn_event_t ev;
-  while (1) {
-    if (hal_buttons_poll(&ev)) ESP_LOGD(TAG, "btn edge a=%d b=%d home=%d down=%d left=%d right=%d up=%d",
-                                        ev.a, ev.b, ev.home, ev.down, ev.left, ev.right, ev.up);
+  while (1)
+  {
+    if (hal_buttons_poll(&ev))
+      ESP_LOGD(TAG, "btn edge a=%d b=%d home=%d down=%d left=%d right=%d up=%d",
+               ev.a, ev.b, ev.home, ev.down, ev.left, ev.right, ev.up);
     nav_tick(xTaskGetTickCount() * portTICK_PERIOD_MS, &ev);
     vTaskDelay(pdMS_TO_TICKS(20));
   }

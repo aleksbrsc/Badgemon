@@ -1,4 +1,6 @@
 #include "ui_play.h"
+#include "ui_duel.h"
+#include "nav.h"
 #include "hal_led.h"
 #include "hal_display.h"
 #include "lobby.h"
@@ -138,8 +140,10 @@ void ui_play_tick(uint32_t now_ms, const btn_event_t *ev) {
       }
     } else if (st == ST_WAIT && !memcmp(evt.mac, wait_mac, 6)) {
       if (evt.accept) {
-        to_result("game on vs %s!", evt.name);
-        hal_led_set_all(0, 24, 0);
+        // Challenge accepted -> start the duel.
+        ui_duel_set_opponent(evt.mac, evt.name);
+        nav_show(SCR_DUEL);
+        return;
       } else {
         to_result("%s declined", evt.name);
         hal_led_set_all(24, 0, 0);
@@ -199,8 +203,10 @@ void ui_play_tick(uint32_t now_ms, const btn_event_t *ev) {
     case ST_DIALOG:
       if (ev->a) {
         lobby_respond(dlg_mac, true);
-        to_result("accepted %s!", dlg_name);
-        hal_led_set_all(0, 24, 0);
+        // I accepted -> start the duel.
+        ui_duel_set_opponent(dlg_mac, dlg_name);
+        nav_show(SCR_DUEL);
+        return;
       } else if (ev->b) {
         lobby_respond(dlg_mac, false);
         to_result("declined %s", dlg_name);

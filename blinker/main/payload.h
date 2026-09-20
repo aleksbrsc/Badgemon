@@ -24,6 +24,7 @@ typedef enum {
   PKT_PRESENCE = 2,  // vals: sender display name
   PKT_CHALLENGE = 3, // vals: target_mac[6] + challenger name
   PKT_RESP = 4,      // vals: target_mac[6] + accept u8 + responder name
+  PKT_DUEL = 5,      // vals: target_mac[6] + turn u8 + move_idx u8
 } pkt_type_t;
 
 typedef struct {

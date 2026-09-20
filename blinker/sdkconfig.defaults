@@ -7,3 +7,7 @@ CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
 CONFIG_LV_FONT_MONTSERRAT_48=y
 CONFIG_LV_FONT_MONTSERRAT_14=y
 CONFIG_LV_FONT_MONTSERRAT_24=y
+# Debuggability: on a panic, print the backtrace then wait 5s before
+# rebooting so it's readable (instead of an instant flashing boot loop).
+CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y
+CONFIG_ESP_SYSTEM_PANIC_REBOOT_DELAY_SECONDS=5

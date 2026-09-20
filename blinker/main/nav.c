@@ -1,6 +1,7 @@
 #include "nav.h"
 #include "ui_menu.h"
 #include "ui_play.h"
+#include "ui_duel.h"
 #include "ui_settings.h"
 #include "ui_keyboard.h"
 #include "store.h"
@@ -37,6 +38,7 @@ void nav_show(screen_t s) {
   switch (s) {
     case SCR_MENU: menu_enter_main(); break;
     case SCR_PLAY: ui_play_enter(); break;
+    case SCR_DUEL: ui_duel_enter(); break;
     case SCR_MSG: break;  // hidden (kept in build)
     case SCR_SETTINGS: ui_settings_enter(); break;
   }
@@ -50,6 +52,11 @@ void nav_tick(uint32_t now_ms, const btn_event_t *ev) {
     case SCR_PLAY:
       ui_play_tick(now_ms, ev);
       if (ev->home && !ui_play_home(ev)) nav_show(SCR_MENU);
+      break;
+    case SCR_DUEL:
+      ui_duel_tick(now_ms, ev);
+      // Home always handled locally (leaves to lobby), never to menu.
+      if (ev->home) ui_duel_home(ev);
       break;
     case SCR_MSG:
       break;  // hidden
