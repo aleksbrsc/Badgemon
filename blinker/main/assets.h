@@ -34,9 +34,9 @@ LV_IMAGE_DECLARE(assets_cursor_white_sm);
 // Enemy (top-left) plate: name + numbers + fill bar over baked HP bar.
 #define DUEL_FOE_NAME_X 26
 #define DUEL_FOE_NAME_Y 27
-#define DUEL_FOE_LEVEL_X 90
+#define DUEL_FOE_LEVEL_X 68
 #define DUEL_FOE_LEVEL_Y 27
-#define DUEL_FOE_LEVEL_W 50
+#define DUEL_FOE_LEVEL_W 44
 #define DUEL_FOE_HP_X 26
 #define DUEL_FOE_HP_Y 36
 #define DUEL_FOE_BAR_X 69
@@ -128,8 +128,8 @@ LV_IMAGE_DECLARE(assets_cursor_white_sm);
 
 // Menu screen on assets_menu_bg (title art baked in, footer baked in).
 #define MENU_TITLE_Y 88
-#define MENU_BTNS_X 24
-#define MENU_BTNS_W 272
+#define MENU_BTNS_X 40
+#define MENU_BTNS_W 240
 #define MENU_BTNS_Y 106
 #define MENU_BTN_H 34
 

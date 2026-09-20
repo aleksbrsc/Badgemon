@@ -61,6 +61,21 @@ static void splash_set_opa(lv_obj_t *img, lv_opa_t opa) {
   lvgl_port_unlock();
 }
 
+static bool splash_skip_pressed(void) {
+  btn_event_t ev;
+  if (!hal_buttons_poll(&ev)) return false;
+  return ev.a || ev.b;
+}
+
+// Wait up to ms, polling buttons; true if A/B skip was pressed.
+static bool splash_wait_ms(uint32_t ms) {
+  for (uint32_t t = 0; t < ms; t += SPLASH_STEP_MS) {
+    if (splash_skip_pressed()) return true;
+    vTaskDelay(pdMS_TO_TICKS(SPLASH_STEP_MS));
+  }
+  return false;
+}
+
 static void boot_loading_screen(void) {
   if (!lvgl_port_lock(0)) {
     ESP_LOGW(TAG, "splash: could not lock LVGL, skipping");
@@ -77,17 +92,25 @@ static void boot_loading_screen(void) {
   lvgl_port_unlock();
   hal_led_set_all(0, 0, 0);
 
-  for (int t = 0; t <= SPLASH_FADE_IN_MS; t += SPLASH_STEP_MS) {
+  bool skip = false;
+  for (int t = 0; t <= SPLASH_FADE_IN_MS && !skip; t += SPLASH_STEP_MS) {
+    if (splash_skip_pressed()) {
+      skip = true;
+      break;
+    }
     splash_set_opa(img, (lv_opa_t)(255 * t / SPLASH_FADE_IN_MS));
     vTaskDelay(pdMS_TO_TICKS(SPLASH_STEP_MS));
   }
+  if (skip) goto splash_done;
   splash_set_opa(img, LV_OPA_COVER);
-  vTaskDelay(pdMS_TO_TICKS(SPLASH_HOLD_MS));
+  if (splash_wait_ms(SPLASH_HOLD_MS)) goto splash_done;
   for (int t = 0; t <= SPLASH_FADE_OUT_MS; t += SPLASH_STEP_MS) {
+    if (splash_skip_pressed()) goto splash_done;
     splash_set_opa(img,
                    (lv_opa_t)(255 * (SPLASH_FADE_OUT_MS - t) / SPLASH_FADE_OUT_MS));
     vTaskDelay(pdMS_TO_TICKS(SPLASH_STEP_MS));
   }
+splash_done:
   splash_set_opa(img, LV_OPA_TRANSP);
 }
 

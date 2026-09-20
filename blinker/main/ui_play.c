@@ -53,6 +53,7 @@ static uint32_t now_ms(void) { return xTaskGetTickCount() * portTICK_PERIOD_MS; 
 static void status_show(const char *s, bool is_err) {
   ESP_LOGI(TAG, "status: %s", s);
   if (!lvgl_port_lock(0)) return;
+  lv_obj_set_style_text_font(status_label, BADGE_FONT_SMALL, LV_PART_MAIN);
   lv_label_set_text(status_label, s);
   lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_style_text_color(status_label,
@@ -88,6 +89,7 @@ static void waiting_show(uint32_t now) {
   char t[16];
   snprintf(t, sizeof(t), "Waiting%.*s", dots, "...");
   if (!lvgl_port_lock(0)) return;
+  lv_obj_set_style_text_font(status_label, BADGE_FONT_SMALL, LV_PART_MAIN);
   lv_label_set_text(status_label, t);
   lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_style_text_color(status_label, lv_color_white(), LV_PART_MAIN);
@@ -97,6 +99,7 @@ static void waiting_show(uint32_t now) {
 static void trainer_spotted_show(void) {
   if (!status_label) return;
   if (!lvgl_port_lock(0)) return;
+  lv_obj_set_style_text_font(status_label, BADGE_FONT, LV_PART_MAIN);
   lv_label_set_text(status_label, "TRAINER SPOTTED!");
   lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_style_text_color(status_label, lv_color_white(), LV_PART_MAIN);

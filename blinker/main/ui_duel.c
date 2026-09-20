@@ -550,7 +550,7 @@ static void win_leds(uint32_t now) {
   for (int k = 0; k < 3; k++) {
     int idx = (pos + k * 2) % HAL_LED_COUNT;
     uint8_t r, g, b;
-    led_wheel((uint8_t)(base + k * 85), 70, &r, &g, &b);
+    led_wheel((uint8_t)(base + k * 85), 48, &r, &g, &b);
     hal_led_set_one(idx, r, g, b);
   }
   hal_led_show();
@@ -566,21 +566,21 @@ static void duel_leds_update(uint32_t now) {
     if (over_won)
       win_leds(now);
     else
-      hal_led_set_all(40, 0, 0);
+      hal_led_set_all(28, 0, 0);
     return;
   }
   uint8_t r, g, b;
   if (st == DS_WAIT) {
-    hp_led_rgb(mons[me_idx].health, mons[me_idx].max_health, 48, &r, &g, &b);
+    hp_led_rgb(mons[me_idx].health, mons[me_idx].max_health, 32, &r, &g, &b);
     hal_led_set_all(r, g, b);
     return;
   }
   if (now < dmg_flash_until) {
     bool on = ((now / 120) % 2) == 0;
-    hp_led_rgb(mons[me_idx].health, mons[me_idx].max_health, on ? 150 : 8, &r,
+    hp_led_rgb(mons[me_idx].health, mons[me_idx].max_health, on ? 96 : 6, &r,
                &g, &b);
   } else {
-    hp_led_rgb(mons[me_idx].health, mons[me_idx].max_health, 48, &r, &g, &b);
+    hp_led_rgb(mons[me_idx].health, mons[me_idx].max_health, 32, &r, &g, &b);
   }
   hal_led_set_all(r, g, b);
 }
